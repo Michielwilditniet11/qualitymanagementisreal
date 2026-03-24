@@ -1,0 +1,3858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Quality Quest</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    background: #1a1a2e;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    font-family: 'Comic Sans MS', 'Chalkboard SE', cursive;
+    /* Prevent iOS bounce / scroll */
+    position: fixed;
+    overscroll-behavior: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  #gameWrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    /* Leave room for virtual controls on mobile */
+    max-height: 100vh;
+  }
+
+  #gameCanvas {
+    border: 4px solid #FFD700;
+    border-radius: 12px;
+    box-shadow: 0 0 40px rgba(255,215,0,0.4), 0 0 80px rgba(255,100,0,0.2);
+    display: block;
+    /* Critical: canvas fills available width without distortion */
+    max-width: 100%;
+    height: auto;
+    /* Prevent all default touch behaviors on the canvas */
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  #instructions {
+    color: #aaa;
+    font-size: 13px;
+    margin-top: 6px;
+    letter-spacing: 1px;
+  }
+
+  /* ── Virtual controls ── */
+  #virtualControls {
+    display: none;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 120px;
+    pointer-events: none;
+    z-index: 200;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .vbtn {
+    position: absolute;
+    pointer-events: all;
+    border-radius: 50%;
+    background: rgba(255,215,0,0.18);
+    border: 2px solid rgba(255,215,0,0.55);
+    color: #FFD700;
+    font-family: 'Comic Sans MS', cursive;
+    font-weight: bold;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+    transition: background 0.06s;
+    cursor: pointer;
+  }
+  .vbtn:active, .vbtn.pressed {
+    background: rgba(255,215,0,0.50);
+    transform: scale(0.92);
+  }
+
+  /* D-pad left cluster — smaller, closer to edge */
+  #btnLeft  { width:52px; height:52px; left:12px;  bottom:58px; }
+  #btnRight { width:52px; height:52px; left:74px;  bottom:58px; }
+  /* Action buttons right cluster */
+  #btnJump  { width:58px; height:58px; right:12px; bottom:54px; }
+  #btnBomb  { width:48px; height:48px; right:80px; bottom:60px;
+              background:rgba(168,85,247,0.18); border-color:rgba(168,85,247,0.6);
+              color:#a855f7; display:none; }
+
+  /* Swipe hint overlay for bathroom level */
+  #swipeHint {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%,-50%);
+    color: rgba(255,255,255,0.5);
+    font-size: 32px;
+    pointer-events: none;
+    z-index: 150;
+    animation: swipeFade 2s ease-out forwards;
+  }
+  @keyframes swipeFade { 0%{opacity:1} 70%{opacity:0.5} 100%{opacity:0} }
+</style>
+</head>
+<body>
+<div id="gameWrapper">
+<canvas id="gameCanvas" width="800" height="500"></canvas>
+<div id="instructions">← → Arrow Keys to move &nbsp;|&nbsp; SPACEBAR to jump &nbsp;|&nbsp; [Z] ISO Bomb</div>
+</div>
+<div id="swipeHint">👆 Swipe to move</div>
+<div id="landscapeHint" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:999;flex-direction:column;align-items:center;justify-content:center;color:white;font-family:Comic Sans MS,cursive;text-align:center;padding:20px;">
+  <div style="font-size:52px">📱➡️</div>
+  <div style="font-size:22px;margin-top:12px;font-weight:bold">Rotate your phone!</div>
+  <div style="font-size:15px;margin-top:8px;opacity:0.7">This game plays best in landscape mode</div>
+</div>
+<div id="virtualControls">
+  <div class="vbtn" id="btnLeft">◀</div>
+  <div class="vbtn" id="btnRight">▶</div>
+  <div class="vbtn" id="btnJump">JUMP</div>
+  <div class="vbtn" id="btnBomb">💣</div>
+</div>
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+// Prevent context menu on long press
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// ─── GAME STATE ───────────────────────────────────────────────────────────────
+const STATE = { INTRO: -1, MENU: 0, PLAYING: 1, LEVEL_COMPLETE: 2, GAME_OVER: 3, WIN: 4, LIVING_ROOM: 5, DELIVERY_CUTSCENE: 6, ENDING: 7 };
+let gameState = STATE.INTRO;
+let introTimer = 0; // frames elapsed on intro screen
+let currentLevel = 0;
+let score = 0;
+let lives = 3;
+let particles = [];
+let flashEffects = [];
+
+// ─── INPUT ───────────────────────────────────────────────────────────────────
+const keys = {};
+document.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault();
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.INTRO) { gameState = STATE.MENU; introTimer = 0; }
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.MENU) startLevel(0);
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.LEVEL_COMPLETE) {
+    const wasDelivery = LEVELS[currentLevel] && LEVELS[currentLevel].isDeliveryBoss;
+    const wasBathroom = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+    currentLevel++;
+    if (wasBathroom) { cinematicTimer = 0; gameState = STATE.LIVING_ROOM; }
+    else if (wasDelivery || currentLevel >= LEVELS.length) { cinematicTimer = 0; gameState = STATE.LIVING_ROOM; }
+    else startLevel(currentLevel);
+  }
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.DELIVERY_CUTSCENE) {
+    if (cinematicTimer > 200) { startDeliveryBoss(); }
+  }
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.ENDING) {
+    if (endingTimer > 1150) { score = 0; lives = 3; currentLevel = 0; gameState = STATE.MENU; }
+  }
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.GAME_OVER) { score = 0; lives = 3; startLevel(0); currentLevel = 0; }
+  if ((e.code === 'Space' || e.code === 'Enter') && gameState === STATE.WIN) { score = 0; lives = 3; currentLevel = 0; gameState = STATE.MENU; }
+});
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ─── LEVEL DEFINITIONS ────────────────────────────────────────────────────────
+const LEVELS = [
+  { // Level 1 – Open Floor Plan
+    name: "Open Floor Plan",
+    bgColors: ['#87CEEB','#E0F4FF'],
+    floorColor: '#8B7355',
+    accentColor: '#4CAF50',
+    platforms: [
+      {x:0,   y:460, w:800, h:40, type:'floor'},
+      {x:80,  y:370, w:140, h:20, type:'desk'},
+      {x:280, y:320, w:140, h:20, type:'desk'},
+      {x:480, y:380, w:120, h:20, type:'cabinet'},
+      {x:620, y:290, w:130, h:20, type:'shelf'},
+      {x:150, y:240, w:100, h:20, type:'shelf'},
+      {x:350, y:200, w:110, h:20, type:'cabinet'},
+    ],
+    collectibles: [
+      {x:120, y:340, type:'report'},{x:310, y:290, type:'tp'},
+      {x:500, y:350, type:'report'},{x:655, y:260, type:'tp'},
+      {x:170, y:210, type:'report'},{x:380, y:170, type:'tp'},
+    ],
+    enemies: [
+      {x:80,  y:440, patrol:80,  speed:1.2, type:'recall'},
+      {x:480, y:360, patrol:100, speed:1.4, type:'recall'},
+      {x:280, y:300, patrol:120, speed:1.0, type:'bart'},
+    ],
+    playerStart: {x:40, y:400},
+  },
+  { // Level 2 – Conference Room
+    name: "Conference Room",
+    bgColors: ['#D4EDDA','#C3E6CB'],
+    floorColor: '#6d4c41',
+    accentColor: '#2196F3',
+    platforms: [
+      {x:0,   y:460, w:800, h:40, type:'floor'},
+      {x:50,  y:390, w:200, h:20, type:'table'},
+      {x:300, y:350, w:180, h:20, type:'table'},
+      {x:540, y:310, w:200, h:20, type:'table'},
+      {x:120, y:270, w:120, h:20, type:'shelf'},
+      {x:380, y:220, w:140, h:20, type:'cabinet'},
+      {x:610, y:200, w:100, h:20, type:'shelf'},
+    ],
+    collectibles: [
+      {x:80,  y:360, type:'report'},{x:200, y:360, type:'tp'},
+      {x:330, y:320, type:'report'},{x:450, y:320, type:'tp'},
+      {x:560, y:280, type:'report'},{x:140, y:240, type:'tp'},
+      {x:400, y:190, type:'report'},{x:640, y:170, type:'tp'},
+    ],
+    enemies: [
+      {x:250, y:440, patrol:100, speed:1.6, type:'recall'},
+      {x:350, y:330, patrol:120, speed:1.4, type:'recall'},
+      {x:580, y:290, patrol:130, speed:1.5, type:'bart'},
+      {x:450, y:200, patrol:100, speed:1.8, type:'bart'},
+    ],
+    playerStart: {x:40, y:400},
+  },
+  { // Level 3 - BOSS: The Porcelain Menace
+    name: "BOSS: The Porcelain Menace",
+    bgColors: ['#1a0a2e','#2d1b4e'],
+    floorColor: '#3d2a6e',
+    accentColor: '#a855f7',
+    isBossLevel: true,
+    platforms: [
+      {x:0,   y:460, w:800, h:40, type:'floor'},
+      {x:50,  y:370, w:120, h:18, type:'shelf'},
+      {x:220, y:320, w:100, h:18, type:'desk'},
+      {x:480, y:320, w:100, h:18, type:'desk'},
+      {x:650, y:370, w:120, h:18, type:'shelf'},
+      {x:320, y:260, w:160, h:18, type:'table'},
+    ],
+    collectibles: [
+      {x:80,  y:340, type:'iso'},{x:140, y:340, type:'iso'},
+      {x:240, y:290, type:'iso'},{x:500, y:290, type:'iso'},
+      {x:670, y:340, type:'iso'},{x:730, y:340, type:'iso'},
+      {x:355, y:230, type:'iso'},{x:430, y:230, type:'iso'},
+    ],
+    enemies: [],
+    playerStart: {x:60, y:400},
+  },
+  { // Level 4 – Bathroom Escape (TOP-DOWN PAC-MAN)
+    name: "Bathroom Escape",
+    isBathroomLevel: true,
+    survivalTime: 1800,
+    platforms: [], collectibles: [], enemies: [],
+    playerStart: {x:60, y:400},
+  },
+  { // Level 5 – Delivery Boss
+    name: "The Reckoning",
+    bgColors: ['#1a1a2e','#0d1117'],
+    floorColor: '#2d2d44',
+    accentColor: '#FF6B35',
+    isDeliveryBoss: true,
+    platforms: [
+      {x:0,   y:460, w:800, h:40, type:'floor'},
+      {x:60,  y:370, w:130, h:18, type:'shelf'},
+      {x:260, y:320, w:120, h:18, type:'desk'},
+      {x:450, y:300, w:120, h:18, type:'desk'},
+      {x:630, y:370, w:130, h:18, type:'shelf'},
+      {x:170, y:240, w:110, h:18, type:'cabinet'},
+      {x:520, y:230, w:110, h:18, type:'cabinet'},
+    ],
+    collectibles: [
+      {x:90,  y:340, type:'money'},{x:160, y:340, type:'money'},
+      {x:280, y:290, type:'money'},{x:470, y:270, type:'money'},
+      {x:650, y:340, type:'money'},{x:700, y:340, type:'money'},
+      {x:200, y:210, type:'money'},{x:545, y:200, type:'money'},
+    ],
+    enemies: [],
+    playerStart: {x:60, y:400},
+  },
+];
+
+
+// ─── PLAYER ───────────────────────────────────────────────────────────────────
+let player = { x:40, y:400, w:36, h:44, vx:0, vy:0, onGround:false, facing:1, invincible:0, frame:0, frameTimer:0 };
+
+// ─── LEVEL STATE ─────────────────────────────────────────────────────────────
+let platforms = [], collectibles = [], enemies = [];
+let levelStartGrace = 0; // frames enemies are frozen at level start
+
+// Boss state
+let boss = null;
+let bombs = [];       // ISO bombs in flight
+let isoBombs = 0;     // bombs Devi is carrying
+let bossProjectiles = []; // toilet water attacks
+let poopSmears = [];   // poop splats on win screen
+let bossExploding = false; // explosion animation state
+let bossExplosionTimer = 0;
+let survivalTimer = 0;  // counts up in bathroom level
+let deliveryBoss = null;
+let moneyBills = [];       // money bills Devi throws
+let moneyCount = 0;
+let packages = [];         // boss packages projectiles
+let cinematicTimer = 0; // general cinematic frame counter
+let endingTimer = 0;    // ending cinematic frame counter
+
+// ─── TOP-DOWN BATHROOM MAZE ENGINE ──────────────────────────────────────────
+// 20x13 maze. 1=wall, 0=corridor, 3=toilet, 4=sink
+const MAZE = [
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,0,1,1,0,1,1,1,0,1,1,0,1,1,1,0,1,1,0,1],
+  [1,0,1,3,0,0,0,0,0,0,0,0,0,0,0,0,3,1,0,1],
+  [1,0,1,1,0,1,0,1,1,1,1,1,1,0,1,0,1,1,0,1],
+  [1,0,0,0,0,1,0,0,0,4,4,0,0,0,1,0,0,0,0,1],
+  [1,0,1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1,0,1],
+  [1,0,1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1,0,1],
+  [1,0,0,0,0,1,0,1,1,0,0,1,1,0,1,0,0,0,0,1],
+  [1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1],
+  [1,0,1,0,0,1,1,0,1,3,3,1,0,1,1,0,0,1,0,1],
+  [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+  [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+];
+const COLS = MAZE[0].length, ROWS = MAZE.length;
+const CELL = 38;
+const MAZE_OX = Math.floor((800 - COLS*CELL)/2);
+const MAZE_OY = Math.floor((500 - ROWS*CELL)/2) - 8;
+
+function mazeWall(col, row) {
+  if (row<0||row>=ROWS||col<0||col>=COLS) return true;
+  return MAZE[row][col] === 1;
+}
+
+// ── Player: integer grid position + sub-pixel lerp ───────────────────────────
+let tdPlayer = {
+  col:1, row:1,
+  px:1,  py:1,
+  dx:0,  dy:0,
+  ndx:1, ndy:0,
+  lastDx:1, lastDy:0,
+  moving:false,
+  srcCol:1, srcRow:1,
+  destCol:1, destRow:1,
+  t:1.0,
+  mouthT:0,
+  dead:false,
+};
+
+// ── Colleagues ────────────────────────────────────────────────────────────────
+let tdColleagues = [];
+function resetTdColleagues() {
+  tdColleagues = [
+    { col:9, row:5, px:9, py:5, dx:1, dy:0, t:1, name:'Karen', shirt:'#e74c3c', speed:0.04 },
+    { col:10,row:7, px:10,py:7, dx:-1,dy:0, t:1, name:'Dave',  shirt:'#3498db', speed:0.038 },
+    { col:5, row:9, px:5, py:9, dx:0, dy:1, t:1, name:'Phil',  shirt:'#27ae60', speed:0.036 },
+  ];
+}
+resetTdColleagues();
+
+// ── Movement helpers ──────────────────────────────────────────────────────────
+function tdStep(col, row, dc, dr) {
+  // Returns true if moving from (col,row) in direction (dc,dr) is valid
+  return !mazeWall(col+dc, row+dr);
+}
+
+function updateTdEntity(e, targetCol, targetRow, chasePlayer) {
+  // e has: col, row, px, py, dx, dy, t, speed
+  e.t += e.speed;
+  if (e.t >= 1.0) {
+    e.t = 1.0;
+    // Arrived at cell centre — pick next direction
+    e.col = Math.round(e.px);
+    e.row = Math.round(e.py);
+    e.px = e.col; e.py = e.row;
+
+    // Gather open neighbours (no U-turn)
+    const dirs = [{dc:1,dr:0},{dc:-1,dr:0},{dc:0,dr:1},{dc:0,dr:-1}];
+    let options = dirs.filter(d =>
+      tdStep(e.col, e.row, d.dc, d.dr) &&
+      !(d.dc === -e.dx && d.dr === -e.dy)
+    );
+    // If no options (dead end), allow U-turn
+    if (options.length === 0)
+      options = dirs.filter(d => tdStep(e.col, e.row, d.dc, d.dr));
+    if (options.length === 0) return;
+
+    let chosen;
+    if (chasePlayer) {
+      // Sort by distance to target, pick closest 85% of the time
+      options.sort((a,b)=>{
+        const da = Math.hypot((e.col+a.dc)-targetCol,(e.row+a.dr)-targetRow);
+        const db = Math.hypot((e.col+b.dc)-targetCol,(e.col+b.dr)-targetRow);
+        return da-db;
+      });
+      chosen = (Math.random()<0.85) ? options[0] : options[Math.floor(Math.random()*options.length)];
+    } else {
+      chosen = options[Math.floor(Math.random()*options.length)];
+    }
+
+    e.dx = chosen.dc; e.dy = chosen.dr;
+    e.t = 0;
+  }
+
+  // Interpolate pixel position
+  e.px = e.col + e.dx * e.t;
+  e.py = e.row + e.dy * e.t;
+}
+
+function updateTopDown() {
+  if (!LEVELS[currentLevel]||!LEVELS[currentLevel].isBathroomLevel) return;
+  if (gameState !== STATE.PLAYING) return;
+
+  survivalTimer++;
+  const needed = LEVELS[currentLevel].survivalTime;
+
+  // ── Player movement — strict cell-to-cell, never mid-wall ──────────────
+  tdPlayer.mouthT += 0.15;
+
+  // Only move if we are currently travelling between two valid open cells
+  if (tdPlayer.moving) {
+    tdPlayer.t += 0.12; // travel speed (0..1 across one cell)
+    if (tdPlayer.t >= 1.0) {
+      // Arrived — lock exactly onto destination cell
+      tdPlayer.t = 1.0;
+      tdPlayer.col = tdPlayer.destCol;
+      tdPlayer.row = tdPlayer.destRow;
+      tdPlayer.px  = tdPlayer.col;
+      tdPlayer.py  = tdPlayer.row;
+      tdPlayer.dx  = 0;
+      tdPlayer.dy  = 0;
+      tdPlayer.moving = false;
+    } else {
+      // Interpolate — pure lerp between source and dest, no drift possible
+      tdPlayer.px = tdPlayer.srcCol + (tdPlayer.destCol - tdPlayer.srcCol) * tdPlayer.t;
+      tdPlayer.py = tdPlayer.srcRow + (tdPlayer.destRow - tdPlayer.srcRow) * tdPlayer.t;
+    }
+  }
+
+  // When stationary, try to start a new move
+  if (!tdPlayer.moving) {
+    // Try buffered direction first, then current
+    const tryDirs = [];
+    if (tdPlayer.ndx !== 0 || tdPlayer.ndy !== 0) tryDirs.push([tdPlayer.ndx, tdPlayer.ndy]);
+    if ((tdPlayer.lastDx||0) !== 0 || (tdPlayer.lastDy||0) !== 0) tryDirs.push([tdPlayer.lastDx||0, tdPlayer.lastDy||0]);
+
+    for (const [dx, dy] of tryDirs) {
+      const nc = tdPlayer.col + dx;
+      const nr = tdPlayer.row + dy;
+      if (!mazeWall(nc, nr) && nc >= 0 && nc < COLS && nr >= 0 && nr < ROWS) {
+        tdPlayer.srcCol  = tdPlayer.col;
+        tdPlayer.srcRow  = tdPlayer.row;
+        tdPlayer.destCol = nc;
+        tdPlayer.destRow = nr;
+        tdPlayer.dx = dx; tdPlayer.dy = dy;
+        tdPlayer.lastDx = dx; tdPlayer.lastDy = dy;
+        tdPlayer.t = 0;
+        tdPlayer.moving = true;
+        break;
+      }
+    }
+  }
+
+  // ── Colleague movement ───────────────────────────────────────────────────
+  if (levelStartGrace > 0) { levelStartGrace--; }
+  else {
+    for (const c of tdColleagues) {
+      // Speed scales up over time
+      const urgency = 1 + (survivalTimer / needed) * 1.5;
+      c.speed = (0.036 + (c.name==='Karen'?0.004:c.name==='Dave'?0.002:0)) * urgency;
+      updateTdEntity(c, tdPlayer.px, tdPlayer.py, true);
+
+      // Collision
+      if (Math.hypot(c.px - tdPlayer.px, c.py - tdPlayer.py) < 0.65) {
+        loseLife('colleague', c.name);
+        // Respawn Devi at start, reset colleagues, add grace period
+        tdPlayer.col=1; tdPlayer.row=1;
+        tdPlayer.px=1;  tdPlayer.py=1;
+        tdPlayer.dx=0;  tdPlayer.dy=0;
+        tdPlayer.ndx=1; tdPlayer.ndy=0;
+        tdPlayer.lastDx=1; tdPlayer.lastDy=0;
+        tdPlayer.moving=false; tdPlayer.srcCol=1; tdPlayer.srcRow=1; tdPlayer.destCol=1; tdPlayer.destRow=1;
+        tdPlayer.t=1;   tdPlayer.mouthT=0;
+        resetTdColleagues();
+        levelStartGrace = 120; // 2 seconds invincibility
+        survivalTimer = Math.max(0, survivalTimer - 360);
+        return;
+      }
+    }
+  }
+
+  // ── Win — only if player is still on valid map tile ────────────────────────
+  const _safeC = Math.round(tdPlayer.px), _safeR = Math.round(tdPlayer.py);
+  const _onMap = _safeC>=0&&_safeC<COLS&&_safeR>=0&&_safeR<ROWS&&!mazeWall(_safeC,_safeR);
+  if (_onMap && survivalTimer >= needed && !player._levelEndTriggered) {
+    player._levelEndTriggered = true;
+    flashEffects.push({x:400, y:250, text:'🚽 YOU ESCAPED!', life:1.5});
+    setTimeout(()=>{ gameState = STATE.LEVEL_COMPLETE; }, 900);
+  }
+}
+
+// Input — buffer the desired direction, applied on next cell arrival
+document.addEventListener('keydown', e => {
+  if (!LEVELS[currentLevel]||!LEVELS[currentLevel].isBathroomLevel) return;
+  if (e.code==='ArrowRight'||e.code==='KeyD') { tdPlayer.ndx=1;  tdPlayer.ndy=0; e.preventDefault(); }
+  if (e.code==='ArrowLeft' ||e.code==='KeyA') { tdPlayer.ndx=-1; tdPlayer.ndy=0; e.preventDefault(); }
+  if (e.code==='ArrowDown' ||e.code==='KeyS') { tdPlayer.ndx=0;  tdPlayer.ndy=1; e.preventDefault(); }
+  if (e.code==='ArrowUp'   ||e.code==='KeyW') { tdPlayer.ndx=0;  tdPlayer.ndy=-1;e.preventDefault(); }
+});
+
+// ── Draw helpers ─────────────────────────────────────────────────────────────
+function drawTopDownColleague(c) {
+  const sx = MAZE_OX + c.px*CELL + CELL/2;
+  const sy = MAZE_OY + c.py*CELL + CELL/2;
+  const r  = CELL * 0.38;
+  const legSwing = Math.sin(survivalTimer * 0.28) * 6;
+  const armSwing = Math.sin(survivalTimer * 0.28) * 8;
+
+  ctx.save(); ctx.translate(sx, sy);
+
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,0.18)';
+  ctx.beginPath(); ctx.ellipse(1,r*1.05,r*0.75,r*0.22,0,0,Math.PI*2); ctx.fill();
+
+  // Legs — dark trousers
+  ctx.fillStyle='#2c2c3e';
+  ctx.save(); ctx.translate(-r*0.28,r*0.32); ctx.rotate(legSwing*Math.PI/180);
+  ctx.beginPath(); ctx.roundRect(-r*0.16,0,r*0.32,r*0.6,r*0.08); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(r*0.28,r*0.32);  ctx.rotate(-legSwing*Math.PI/180);
+  ctx.beginPath(); ctx.roundRect(-r*0.16,0,r*0.32,r*0.6,r*0.08); ctx.fill(); ctx.restore();
+  // Shoes
+  ctx.fillStyle='#1a1a1a';
+  ctx.beginPath(); ctx.ellipse(-r*0.28,r*0.95,r*0.2,r*0.1,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.28,r*0.95,r*0.2,r*0.1,0,0,Math.PI*2); ctx.fill();
+
+  // Body — office shirt, broader build like photo subject
+  ctx.fillStyle=c.shirt;
+  ctx.beginPath(); ctx.roundRect(-r*0.7,-r*0.1,r*1.4,r*0.9,r*0.16); ctx.fill();
+  // Button strip
+  ctx.strokeStyle='rgba(0,0,0,0.15)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(0,-r*0.08); ctx.lineTo(0,r*0.78); ctx.stroke();
+  // Collar — white V
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.moveTo(-r*0.22,-r*0.1); ctx.lineTo(0,r*0.22); ctx.lineTo(r*0.22,-r*0.1); ctx.fill();
+  // Collar outline
+  ctx.strokeStyle='rgba(0,0,0,0.15)'; ctx.lineWidth=0.8;
+  ctx.beginPath(); ctx.moveTo(-r*0.22,-r*0.1); ctx.lineTo(0,r*0.22); ctx.lineTo(r*0.22,-r*0.1); ctx.stroke();
+
+  // Arms — slightly wider sleeve
+  ctx.fillStyle=c.shirt;
+  ctx.save(); ctx.translate(-r*0.78,-r*0.0); ctx.rotate(-armSwing*Math.PI/180);
+  ctx.beginPath(); ctx.roundRect(-r*0.2,0,r*0.38,r*0.52,r*0.1); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate( r*0.78,-r*0.0); ctx.rotate( armSwing*Math.PI/180);
+  ctx.beginPath(); ctx.roundRect(-r*0.18,0,r*0.38,r*0.52,r*0.1); ctx.fill(); ctx.restore();
+  // Hands
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath(); ctx.ellipse(-r*0.78,r*0.56,r*0.14,r*0.14,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.78,r*0.56,r*0.14,r*0.14,0,0,Math.PI*2); ctx.fill();
+
+  // Neck
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath(); ctx.roundRect(-r*0.18,-r*0.22,r*0.36,r*0.16,r*0.06); ctx.fill();
+
+  // Head — round like photo, fuller face
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath(); ctx.ellipse(0,-r*0.66,r*0.46,r*0.5,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=0.8; ctx.stroke();
+
+  // Hair — each character distinct
+  if (c.name==='Karen') {
+    // Karen: blonde, longer bob
+    ctx.fillStyle='#E8C840';
+    ctx.beginPath(); ctx.ellipse(0,-r*1.06,r*0.46,r*0.24,0,Math.PI,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-r*0.44,-r*0.72,r*0.12,r*0.28,0.3,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( r*0.44,-r*0.72,r*0.12,r*0.28,-0.3,0,Math.PI*2); ctx.fill();
+  } else if (c.name==='Dave') {
+    // Dave: short dark hair, receding slightly
+    ctx.fillStyle='#2c1500';
+    ctx.beginPath(); ctx.ellipse(0,-r*1.06,r*0.44,r*0.22,0,Math.PI,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(-r*0.4,-r*0.8,r*0.1,r*0.2,0.4,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse( r*0.4,-r*0.8,r*0.1,r*0.2,-0.4,0,Math.PI*2); ctx.fill();
+  } else {
+    // Phil: short grey hair
+    ctx.fillStyle='#888';
+    ctx.beginPath(); ctx.ellipse(0,-r*1.05,r*0.44,r*0.2,0,Math.PI,Math.PI*2); ctx.fill();
+  }
+
+  // Eyes tracking player direction
+  const eyeOx = (c.dx||0)*r*0.09, eyeOy = (c.dy||0)*r*0.09;
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-r*0.18+eyeOx,-r*0.7+eyeOy,r*0.14,r*0.16,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.18+eyeOx,-r*0.7+eyeOy,r*0.14,r*0.16,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2c1200';
+  ctx.beginPath(); ctx.ellipse(-r*0.18+eyeOx,-r*0.7+eyeOy,r*0.08,r*0.09,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.18+eyeOx,-r*0.7+eyeOy,r*0.08,r*0.09,0,0,Math.PI*2); ctx.fill();
+  // Eye shine
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-r*0.15+eyeOx,-r*0.73+eyeOy,r*0.04,r*0.04,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.21+eyeOx,-r*0.73+eyeOy,r*0.04,r*0.04,0,0,Math.PI*2); ctx.fill();
+  // Suspicious eyebrows
+  ctx.fillStyle='#2c1500';
+  ctx.save(); ctx.translate(-r*0.18,-r*0.86); ctx.rotate(-0.25);
+  ctx.beginPath(); ctx.roundRect(-r*0.17,-r*0.05,r*0.34,r*0.09,2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate( r*0.18,-r*0.86); ctx.rotate(0.25);
+  ctx.beginPath(); ctx.roundRect(-r*0.17,-r*0.05,r*0.34,r*0.09,2); ctx.fill(); ctx.restore();
+  // Mouth — tense line
+  ctx.strokeStyle='#b06040'; ctx.lineWidth=1.2;
+  ctx.beginPath(); ctx.moveTo(-r*0.14,-r*0.44); ctx.lineTo(r*0.14,-r*0.44); ctx.stroke();
+
+  // Name badge clipped to shirt
+  ctx.fillStyle='white'; ctx.globalAlpha=0.92;
+  ctx.beginPath(); ctx.roundRect(-r*0.42,r*0.12,r*0.84,r*0.28,r*0.05); ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#1a1a2e'; ctx.font=`bold ${Math.round(r*0.2)}px sans-serif`; ctx.textAlign='center';
+  ctx.fillText(c.name, 0, r*0.32);
+
+  // Alert ! when close
+  const dist = Math.hypot(c.px-tdPlayer.px, c.py-tdPlayer.py);
+  if (dist < 3) {
+    const excAlpha = Math.min(1,(3-dist)/3)*(0.6+Math.sin(Date.now()/80)*0.4);
+    ctx.globalAlpha=excAlpha;
+    ctx.fillStyle='#FF4444'; ctx.font=`bold ${Math.round(r*0.55)}px Comic Sans MS, cursive`;
+    ctx.textAlign='center'; ctx.fillText('!',r*0.65,-r*1.15);
+    ctx.globalAlpha=1;
+  }
+
+  ctx.restore();
+}
+
+function drawTopDown() {
+  ctx.fillStyle='#0f172a'; ctx.fillRect(0,0,800,500);
+
+  // Maze tiles
+  for (let row=0;row<ROWS;row++) {
+    for (let col=0;col<COLS;col++) {
+      const cell=MAZE[row][col];
+      const cx=MAZE_OX+col*CELL, cy=MAZE_OY+row*CELL;
+      if (cell===1) {
+        // Wall tile — blue bathroom tile
+        ctx.fillStyle='#1e3a8a'; ctx.fillRect(cx,cy,CELL,CELL);
+        ctx.fillStyle='#1d4ed8'; ctx.fillRect(cx+1,cy+1,CELL-2,CELL-2);
+        ctx.fillStyle='#2563ab'; ctx.fillRect(cx+2,cy+2,CELL-4,4);
+        ctx.fillStyle='#1e40af'; ctx.fillRect(cx+2,cy+6,CELL-4,CELL-8);
+        ctx.strokeStyle='#1e3a8a'; ctx.lineWidth=1; ctx.strokeRect(cx,cy,CELL,CELL);
+      } else {
+        // Floor
+        const shade=(row+col)%2===0?'#f1f5f9':'#e2e8f0';
+        ctx.fillStyle=shade; ctx.fillRect(cx,cy,CELL,CELL);
+        ctx.strokeStyle='#cbd5e1'; ctx.lineWidth=0.5; ctx.strokeRect(cx,cy,CELL,CELL);
+
+        if (cell===3) {
+          // Top-down toilet view
+          ctx.fillStyle='#f8fafc';
+          ctx.beginPath(); ctx.ellipse(cx+CELL/2,cy+CELL*0.6,CELL*0.3,CELL*0.34,0,0,Math.PI*2); ctx.fill();
+          ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.stroke();
+          ctx.fillStyle='#e2e8f0';
+          ctx.beginPath(); ctx.roundRect(cx+CELL*0.22,cy+CELL*0.06,CELL*0.56,CELL*0.32,3); ctx.fill(); ctx.stroke();
+          ctx.fillStyle='rgba(147,197,253,0.5)';
+          ctx.beginPath(); ctx.ellipse(cx+CELL/2,cy+CELL*0.62,CELL*0.18,CELL*0.2,0,0,Math.PI*2); ctx.fill();
+        }
+        if (cell===4) {
+          // Top-down sink view
+          ctx.fillStyle='#f0f9ff';
+          ctx.beginPath(); ctx.roundRect(cx+CELL*0.15,cy+CELL*0.12,CELL*0.7,CELL*0.7,5); ctx.fill();
+          ctx.strokeStyle='#94a3b8'; ctx.lineWidth=1.5; ctx.stroke();
+          ctx.fillStyle='rgba(147,197,253,0.4)';
+          ctx.beginPath(); ctx.ellipse(cx+CELL/2,cy+CELL/2,CELL*0.22,CELL*0.22,0,0,Math.PI*2); ctx.fill();
+          ctx.fillStyle='#94a3b8';
+          ctx.fillRect(cx+CELL/2-2,cy+CELL*0.14,4,8);
+          ctx.fillRect(cx+CELL/2-7,cy+CELL*0.17,14,3);
+        }
+      }
+    }
+  }
+
+  // Draw colleagues
+  for (const c of tdColleagues) drawTopDownColleague(c);
+
+  // Draw Devi as top-down pac-man
+  const px=MAZE_OX+tdPlayer.px*CELL+CELL/2;
+  const py=MAZE_OY+tdPlayer.py*CELL+CELL/2;
+  const r=CELL*0.4;
+  const angle = Math.atan2(tdPlayer.dy||0.001, tdPlayer.dx||0.001);
+  const mouth = Math.abs(Math.sin(tdPlayer.mouthT)) * 0.65;
+
+  ctx.save(); ctx.translate(px,py);
+  if (levelStartGrace > 0) ctx.globalAlpha = Math.floor(levelStartGrace/6)%2===0 ? 0.3 : 1.0;
+  // Shadow
+  ctx.fillStyle='rgba(0,0,0,0.2)';
+  ctx.beginPath(); ctx.ellipse(2,3,r,r*0.55,0,0,Math.PI*2); ctx.fill();
+  // Face pac-man body — warm skin matching photo
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath();
+  ctx.moveTo(0,0);
+  ctx.arc(0,0,r,angle+mouth+0.05,angle+Math.PI*2-mouth-0.05);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=1.5; ctx.stroke();
+  // Rotate to face direction then draw features
+  ctx.rotate(angle);
+  // Dark buzzcut hair on top half
+  ctx.fillStyle='#1a1010';
+  ctx.beginPath(); ctx.arc(0,0,r,Math.PI,0); ctx.closePath(); ctx.fill();
+  // Re-draw skin for face area (lower half only shows)
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath(); ctx.arc(0,0,r*0.82,Math.PI*0.15,Math.PI*0.85); ctx.closePath(); ctx.fill();
+  // Eyes
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-r*0.32,-r*0.1,r*0.18,r*0.2,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.32,-r*0.1,r*0.18,r*0.2,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2c1200';
+  ctx.beginPath(); ctx.ellipse(-r*0.32,-r*0.1,r*0.1,r*0.12,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.32,-r*0.1,r*0.1,r*0.12,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-r*0.28,-r*0.14,r*0.05,r*0.05,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse( r*0.36,-r*0.14,r*0.05,r*0.05,0,0,Math.PI*2); ctx.fill();
+  // Eyebrows - dark straight
+  ctx.fillStyle='#1a1010';
+  ctx.save(); ctx.translate(-r*0.32,-r*0.32); ctx.rotate(-0.05);
+  ctx.beginPath(); ctx.roundRect(-r*0.2,-r*0.06,r*0.4,r*0.1,2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate( r*0.32,-r*0.32); ctx.rotate(0.05);
+  ctx.beginPath(); ctx.roundRect(-r*0.2,-r*0.06,r*0.4,r*0.1,2); ctx.fill(); ctx.restore();
+  ctx.restore();
+  ctx.globalAlpha=1;
+
+  // HUD
+  const lv=LEVELS[currentLevel];
+  const remaining=Math.max(0,Math.ceil((lv.survivalTime-survivalTimer)/60));
+  const frac=Math.min(1,survivalTimer/lv.survivalTime);
+  const bw=300,bh=24,bx=(800-bw)/2,by=8;
+  ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.beginPath(); ctx.roundRect(bx-5,by-4,bw+10,bh+8,8); ctx.fill();
+  ctx.fillStyle='#1e3a5f'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+  const pct=1-frac;
+  ctx.fillStyle=pct>0.5?'#22c55e':pct>0.25?'#fbbf24':'#ef4444';
+  ctx.beginPath(); ctx.roundRect(bx,by,bw*pct,bh,4); ctx.fill();
+  const pulse=remaining<=10?(0.6+Math.sin(Date.now()/90)*0.4):1;
+  ctx.globalAlpha=pulse;
+  ctx.fillStyle='white'; ctx.font='bold 13px Comic Sans MS, cursive'; ctx.textAlign='center';
+  ctx.fillText('🚽  '+remaining+'s — Don\'t get spotted!', 400, by+17);
+  ctx.globalAlpha=1;
+  // Lives
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.roundRect(8,8,140,34,8); ctx.fill();
+  ctx.textAlign='right';
+  for(let i=0;i<3;i++){
+    ctx.globalAlpha=i<lives?1:0.25;
+    ctx.font='20px serif'; ctx.fillText('💼',138-i*36,30);
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle='rgba(255,255,255,0.35)'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(typeof isTouchDevice!=='undefined'&&isTouchDevice?'Swipe to move':'Arrow keys / WASD to move',400,492);
+}
+
+function startDeliveryBoss() {
+  // Level 5 is index... find it
+  const idx = LEVELS.findIndex(l => l.isDeliveryBoss);
+  currentLevel = idx;
+  cinematicTimer = 0;
+  startLevel(idx);
+}
+
+function startLevel(idx) {
+  const lv = LEVELS[idx];
+  platforms = lv.platforms.map(p => ({...p}));
+  collectibles = lv.collectibles.map(c => ({...c, collected:false}));
+  enemies = lv.enemies.map(e => ({...e, dir:1, startX:e.x, dy:0, bobTimer:0}));
+  player.x = lv.playerStart.x;
+  player.y = lv.playerStart.y;
+  player.vx = 0; player.vy = 0; player.onGround = false; player.invincible = 0;
+  particles = []; flashEffects = [];
+  bombs = [];
+  bossProjectiles = [];
+  player._levelEndTriggered = false;
+  poopSmears = [];
+  bossExploding = false;
+  bossExplosionTimer = 0;
+  levelStartGrace = 100; // ~1.7 seconds of safety
+  isoBombs = 0;
+  survivalTimer = 0;
+  if (lv.isBathroomLevel) {
+    resetTdColleagues();
+    tdPlayer.col=1; tdPlayer.row=1; tdPlayer.px=1; tdPlayer.py=1;
+    tdPlayer.dx=0; tdPlayer.dy=0; tdPlayer.ndx=1; tdPlayer.ndy=0;
+    tdPlayer.t=1; tdPlayer.mouthT=0;
+    tdPlayer.moving=false; tdPlayer.srcCol=1; tdPlayer.srcRow=1; tdPlayer.destCol=1; tdPlayer.destRow=1; tdPlayer.lastDx=1; tdPlayer.lastDy=0;
+  } else if (lv.isBossLevel) {
+    boss = {
+      x: 400, y: 230, w: 90, h: 100,
+      hp: 10, maxHp: 10,
+      dir: 1, speed: 1.2,
+      phase: 1,
+      attackTimer: 0, attackInterval: 120,
+      bounceVy: 0, onGround: true,
+      hitFlash: 0,
+      dead: false,
+    };
+  } else if (lv.isDeliveryBoss) {
+    deliveryBoss = {
+      x: 620, y: 200, w: 100, h: 130,
+      hp: 12, maxHp: 12,
+      dir: -1, speed: 1.5,
+      phase: 1,
+      attackTimer: 0, attackInterval: 90,
+      hitFlash: 0, dead: false,
+      shakeX: 0,
+      taunt: null, tauntTimer: 0,
+    };
+    boss = null;
+  } else {
+    boss = null;
+    deliveryBoss = null;
+  }
+  moneyBills = []; packages = []; moneyCount = 0;
+  gameState = STATE.PLAYING;
+}
+
+// ─── PARTICLES ───────────────────────────────────────────────────────────────
+function spawnParticles(x, y, color, count, text) {
+  for (let i = 0; i < count; i++) {
+    const angle = (Math.PI * 2 / count) * i + Math.random() * 0.5;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * (2 + Math.random() * 3),
+      vy: Math.sin(angle) * (2 + Math.random() * 3) - 2,
+      life: 1.0, color, size: 5 + Math.random() * 5
+    });
+  }
+  if (text) flashEffects.push({x, y, text, life: 1.0});
+}
+
+// ─── PHYSICS ─────────────────────────────────────────────────────────────────
+const GRAVITY = 0.55;
+const JUMP_FORCE = -13;
+const MOVE_SPEED = 4.5;
+
+function rectOverlap(a, b) {
+  return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y;
+}
+
+function updatePlayer() {
+  if (gameState !== STATE.PLAYING) return;
+  if (keys['ArrowLeft'])  { player.vx = -MOVE_SPEED; player.facing = -1; }
+  else if (keys['ArrowRight']) { player.vx = MOVE_SPEED; player.facing = 1; }
+  else player.vx *= 0.75;
+
+  if ((keys['Space'] || keys['ArrowUp']) && player.onGround) {
+    player.vy = JUMP_FORCE;
+    player.onGround = false;
+    sfxJump();
+  }
+
+  player.vy += GRAVITY;
+  player.onGround = false;
+
+  // ── X pass: move horizontally then resolve walls ─────────────────────────
+  player.x += player.vx;
+  for (const p of platforms) {
+    if (!rectOverlap(player, p)) continue;
+    // Only push horizontally if Devi genuinely overlaps the side, not the top/bottom edge
+    const vertOverlap = Math.min(
+      (player.y + player.h) - p.y,
+      (p.y + p.h) - player.y
+    );
+    if (vertOverlap < 3) continue; // tiny clip at edge — Y pass will handle it
+    if (player.vx >= 0) { player.x = p.x - player.w; }
+    else                { player.x = p.x + p.w; }
+    player.vx = 0;
+  }
+
+  // ── Y pass: move vertically then resolve floors and ceilings ─────────────
+  player.y += player.vy;
+  for (const p of platforms) {
+    if (!rectOverlap(player, p)) continue;
+    if (player.vy >= 0) {
+      // Landing on top
+      player.y = p.y - player.h;
+      player.vy = 0;
+      player.onGround = true;
+    } else {
+      // Hitting underside of platform
+      player.y = p.y + p.h;
+      player.vy = 0;
+    }
+  }
+
+  // Clamp to canvas
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > canvas.width) player.x = canvas.width - player.w;
+  if (player.y > canvas.height) { loseLife(); return; }
+
+  // Animate
+  player.frameTimer++;
+  if (player.frameTimer > 8) { player.frame = (player.frame + 1) % 4; player.frameTimer = 0; }
+
+  if (player.invincible > 0) player.invincible--;
+
+  // Collectibles
+  for (const c of collectibles) {
+    if (!c.collected && rectOverlap(player, {x:c.x-14,y:c.y-14,w:28,h:28})) {
+      c.collected = true;
+      if (c.type === 'money') {
+        moneyCount++;
+        score += 50;
+        sfxCollect();
+        spawnParticles(c.x, c.y, '#22c55e', 8, '+$50');
+      } else if (c.type === 'money') {
+    // Money bill
+    const glow = 0.6 + Math.sin(Date.now()/250 + c.x)*0.4;
+    ctx.shadowColor='#22c55e'; ctx.shadowBlur=10*glow;
+    ctx.fillStyle='#15803d';
+    ctx.beginPath(); ctx.roundRect(-18,-10,36,20,3); ctx.fill();
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#22c55e';
+    ctx.beginPath(); ctx.roundRect(-16,-8,32,16,2); ctx.fill();
+    ctx.fillStyle='#86efac'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('$$$',0,3);
+    ctx.strokeStyle='#15803d'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.roundRect(-18,-10,36,20,3); ctx.stroke();
+  } else if (c.type === 'iso') {
+        isoBombs++;
+        sfxCollect();
+        spawnParticles(c.x, c.y, '#a855f7', 8, 'ISO BOMB!');
+      } else {
+        score += c.type === 'report' ? 100 : 75;
+        spawnParticles(c.x, c.y, c.type==='report'?'#4CAF50':'#2196F3', 8, c.type==='report'?'+100':'+75');
+      }
+    }
+  }
+
+  // Throw money bill with Z key (delivery boss level)
+  const isDelivery = LEVELS[currentLevel] && LEVELS[currentLevel].isDeliveryBoss;
+  if (isDelivery && keys['KeyZ'] && moneyCount > 0 && !player._zHeld) {
+    moneyCount--;
+    player._zHeld = true;
+    sfxBomb();
+    moneyBills.push({
+      x: player.x + player.w/2,
+      y: player.y + player.h/2,
+      vx: player.facing * 10,
+      vy: -4,
+      rot: 0, spin: player.facing * 0.25,
+      life: 1.0,
+    });
+  }
+
+  // Throw ISO bomb with Z key
+  if (!isDelivery && keys['KeyZ'] && isoBombs > 0 && !player._zHeld) {
+    isoBombs--;
+    player._zHeld = true;
+    sfxBomb();
+    bombs.push({
+      x: player.x + player.w/2,
+      y: player.y + player.h/2,
+      vx: player.facing * 9,
+      vy: -5,
+      life: 1.0,
+    });
+  }
+  if (!keys['KeyZ']) player._zHeld = false;
+
+  // Check level complete
+  const isDeliveryLevel = LEVELS[currentLevel] && LEVELS[currentLevel].isDeliveryBoss;
+  if (isDeliveryLevel && deliveryBoss && deliveryBoss.dead && !player._levelEndTriggered) {
+    player._levelEndTriggered = true;
+    setTimeout(() => { endingTimer = 0; gameState = STATE.ENDING; }, 1200);
+  }
+  const isBoss = LEVELS[currentLevel] && LEVELS[currentLevel].isBossLevel;
+  const isBathroom = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+  const bossDefeated = isBoss && boss && boss.dead;
+  const allCollected = collectibles.every(c => c.collected);
+
+  if (!isBoss && !isBathroom && allCollected) {
+    if (!player._levelEndTriggered) {
+      player._levelEndTriggered = true;
+      spawnParticles(player.x+18, player.y, '#FFD700', 20, '🎉 LEVEL COMPLETE!');
+      setTimeout(() => { gameState = STATE.LEVEL_COMPLETE; }, 800);
+    }
+  }
+
+  // Enemy collision
+  if (player.invincible === 0 && levelStartGrace === 0) {
+    for (const e of enemies) {
+      if (rectOverlap(player, {x:e.x-16,y:e.y-16,w:32,h:32})) {
+        if (e.type === 'colleague') {
+          loseLife('colleague', e.name || 'Colleague');
+        } else if (e.type === 'bart') {
+          loseLife('bart');
+        } else {
+          loseLife();
+        }
+        break;
+      }
+    }
+  }
+}
+
+function loseLife(source, name) {
+  lives--;
+  player.invincible = 120;
+  if (source === 'colleague') {
+    // Colleague caught Devi — handled entirely in updateTopDown, just show flash
+    // (lives already decremented above; respawn handled by caller)
+    sfxCaught();
+    flashEffects.push({x: 400, y: 220, text: (name||'Colleague') + ' SPOTTED YOU!', life: 2.2, isBart: true});
+    flashEffects.push({x: 400, y: 250, text: 'Are you... busy in there?', life: 2.2, isBart: true});
+    if (lives <= 0) { setTimeout(() => { gameState = STATE.GAME_OVER; }, 1200); }
+    return;
+  } else if (source === 'bart') {
+    flashEffects.push({x: player.x+18, y: player.y-10, text: 'WHY ARENT YOU', life: 1.8, isBart: true});
+    flashEffects.push({x: player.x+18, y: player.y+12, text: 'WORKING WITH SALES?!', life: 1.8, isBart: true});
+    spawnParticles(player.x+18, player.y+22, '#e74c3c', 12, null);
+  } else {
+    sfxHit();
+  spawnParticles(player.x+18, player.y+22, '#FF4444', 12, '💥 OUCH!');
+  }
+  player.vy = -8;
+  if (lives <= 0) {
+    setTimeout(() => { gameState = STATE.GAME_OVER; }, 800);
+  }
+}
+
+function updateEnemies() {
+  if (gameState !== STATE.PLAYING) return;
+  if (levelStartGrace > 0) { levelStartGrace--; return; }
+  const lv = LEVELS[currentLevel];
+  for (const e of enemies) {
+    if (e.type === 'colleague') {
+      // Chase Devi horizontally, speed up as timer grows
+      const urgency = lv ? Math.min(2.0, 1 + (survivalTimer / lv.survivalTime) * 1.2) : 1;
+      const dx = player.x - e.x;
+      e.dir = dx > 0 ? 1 : -1;
+      e.x += e.speed * e.dir * urgency;
+      // Keep on floor (y stays fixed)
+      e.bobTimer = (e.bobTimer || 0) + 0.12;
+      e.dy = 0;
+    } else {
+      e.x += e.speed * e.dir;
+      if (e.x > e.startX + e.patrol) { e.dir = -1; }
+      if (e.x < e.startX - e.patrol) { e.dir = 1; }
+      e.bobTimer = (e.bobTimer || 0) + 0.1;
+      e.dy = Math.sin(e.bobTimer) * 4;
+    }
+  }
+}
+
+function updateBoss() {
+  if (!boss || boss.dead || gameState !== STATE.PLAYING) return;
+
+  // Movement: bounce side to side, phase 2 speeds up and jumps
+  boss.x += boss.speed * boss.dir;
+  if (boss.x > canvas.width - boss.w - 20) { boss.x = canvas.width - boss.w - 20; boss.dir = -1; }
+  if (boss.x < 20) { boss.x = 20; boss.dir = 1; }
+
+  // Phase 2 at half HP
+  if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
+    boss.phase = 2;
+    boss.speed = 2.2;
+    boss.attackInterval = 70;
+    spawnParticles(boss.x + boss.w/2, boss.y, '#FF4444', 20, '😤 PHASE 2!');
+  }
+
+  // Gravity / jump for phase 2
+  if (boss.phase === 2) {
+    boss.bounceVy += 0.4;
+    boss.y += boss.bounceVy;
+    if (boss.y >= 230) { boss.y = 230; boss.bounceVy = -10; }
+  }
+
+  // Attack: shoot toilet water blobs
+  boss.attackTimer++;
+  if (boss.attackTimer >= boss.attackInterval) {
+    boss.attackTimer = 0;
+    const cx = boss.x + boss.w/2, cy = boss.y + boss.h/2;
+    const count = boss.phase === 2 ? 5 : 3;
+    for (let i = 0; i < count; i++) {
+      const spread = (i - Math.floor(count/2)) * 0.4;
+      bossProjectiles.push({ x: cx, y: cy + 30, vx: spread * 3, vy: 4 + Math.random()*2, life: 1.0, rot: Math.random()*Math.PI*2, spin: (Math.random()-0.5)*0.2 });
+    }
+  }
+
+  // Flash decay
+  if (boss.hitFlash > 0) boss.hitFlash--;
+
+  // Respawn ISO bombs continuously — always keep player stocked
+  boss.bombRespawnTimer = (boss.bombRespawnTimer || 0) + 1;
+  // Top up every 2 seconds regardless, cap at 5
+  if (boss.bombRespawnTimer >= 120) {
+    boss.bombRespawnTimer = 0;
+    if (isoBombs < 5) {
+      const toAdd = Math.min(3, 5 - isoBombs);
+      isoBombs += toAdd;
+      flashEffects.push({x: 400, y: 180, text: '+' + toAdd + ' ISO BOMBS!', life: 1.2});
+      spawnParticles(400, 220, '#a855f7', 10, null);
+    }
+  }
+  // Emergency instant refill if completely empty with nothing in flight
+  if (isoBombs === 0 && bombs.length === 0) {
+    isoBombs = 5;
+    flashEffects.push({x: 400, y: 180, text: 'EMERGENCY SUPPLY: 5 BOMBS!', life: 1.5});
+    spawnParticles(400, 220, '#FF4444', 18, null);
+  }
+
+  // Bomb hits boss
+  for (const b of bombs) {
+    if (b.life > 0 && rectOverlap({x:b.x-10,y:b.y-10,w:20,h:20}, {x:boss.x,y:boss.y,w:boss.w,h:boss.h})) {
+      b.life = 0;
+      boss.hp--;
+      boss.hitFlash = 20;
+      score += 200;
+      sfxBossHit();
+      spawnParticles(b.x, b.y, '#a855f7', 12, '-1 HP!');
+      if (boss.hp <= 0) {
+        boss.dead = true;
+        bossExploding = true;
+        bossExplosionTimer = 0;
+        // Generate poop smears all over the screen
+        poopSmears = [];
+        for (let i = 0; i < 28; i++) {
+          poopSmears.push({
+            x: Math.random() * 800,
+            y: Math.random() * 500,
+            r: 18 + Math.random() * 40,
+            rot: Math.random() * Math.PI * 2,
+            drips: Math.floor(2 + Math.random() * 4),
+            opacity: 0, // fade in
+            delay: i * 4, // staggered appearance
+          });
+        }
+        for (let i = 0; i < 40; i++) {
+          spawnParticles(boss.x + Math.random()*boss.w, boss.y + Math.random()*boss.h,
+            ['#5D4037','#795548','#8D6E63','#FFD700'][i%4], 8, null);
+        }
+        flashEffects.push({x: boss.x + boss.w/2, y: boss.y, text: '🚽 FLUSHED!', life: 2.5});
+        score += 1000;
+        // Transition to level complete after explosion plays out
+        setTimeout(() => { gameState = STATE.LEVEL_COMPLETE; }, 2200);
+      }
+    }
+  }
+
+  // Player hit by boss directly
+  if (player.invincible === 0 && rectOverlap(player, {x:boss.x,y:boss.y,w:boss.w,h:boss.h})) {
+    loseLife();
+  }
+}
+
+function updateDeliveryBoss() {
+  if (!deliveryBoss || deliveryBoss.dead || gameState !== STATE.PLAYING) return;
+
+  // Phase 2 at half HP
+  if (deliveryBoss.hp <= deliveryBoss.maxHp/2 && deliveryBoss.phase === 1) {
+    deliveryBoss.phase = 2;
+    deliveryBoss.speed = 2.4;
+    deliveryBoss.attackInterval = 55;
+    deliveryBoss.taunt = "WHY WOULD YOU LIE?!";
+    deliveryBoss.tauntTimer = 120;
+    spawnParticles(deliveryBoss.x+50, deliveryBoss.y, '#FF6B35', 20, null);
+  }
+
+  // Shake on hit
+  deliveryBoss.shakeX = deliveryBoss.hitFlash > 0 ? (Math.random()-0.5)*8 : 0;
+  if (deliveryBoss.hitFlash > 0) deliveryBoss.hitFlash--;
+  if (deliveryBoss.tauntTimer > 0) deliveryBoss.tauntTimer--;
+
+  // Move horizontally
+  deliveryBoss.x += deliveryBoss.speed * deliveryBoss.dir;
+  if (deliveryBoss.x > canvas.width - deliveryBoss.w - 10) { deliveryBoss.x = canvas.width - deliveryBoss.w - 10; deliveryBoss.dir = -1; }
+  if (deliveryBoss.x < 10) { deliveryBoss.x = 10; deliveryBoss.dir = 1; }
+
+  // Fire packages
+  deliveryBoss.attackTimer++;
+  if (deliveryBoss.attackTimer >= deliveryBoss.attackInterval) {
+    deliveryBoss.attackTimer = 0;
+    const cx = deliveryBoss.x + deliveryBoss.w/2;
+    const cy = deliveryBoss.y + 40;
+    const count = deliveryBoss.phase === 2 ? 4 : 2;
+    for (let i=0;i<count;i++) {
+      const spread = (i - (count-1)/2) * 0.35;
+      packages.push({
+        x: cx, y: cy,
+        vx: spread * 4 + (player.x > cx ? 1.5 : -1.5),
+        vy: 3 + Math.random()*3,
+        rot: Math.random()*Math.PI*2,
+        spin: (Math.random()-0.5)*0.15,
+        life: 1.0,
+        big: deliveryBoss.phase === 2 && Math.random() > 0.5,
+      });
+    }
+    // Occasional taunt
+    if (Math.random() < 0.3) {
+      const taunts = ['WHY WOULD YOU LIE?!','YOU STOLE FROM ME!','SIGN FOR THIS!','FREE SHIPPING... OF PAIN!','YOU LIED TO ME!','NEXT DAY REVENGE!'];
+      deliveryBoss.taunt = taunts[Math.floor(Math.random()*taunts.length)];
+      deliveryBoss.tauntTimer = 100;
+    }
+  }
+
+  // Refill money bills if player runs out (3 second delay)
+  deliveryBoss.moneyRespawnTimer = (deliveryBoss.moneyRespawnTimer || 0);
+  if (moneyCount === 0 && moneyBills.length === 0) {
+    deliveryBoss.moneyRespawnTimer++;
+    if (deliveryBoss.moneyRespawnTimer >= 180) { // 3 seconds
+      deliveryBoss.moneyRespawnTimer = 0;
+      moneyCount = 5;
+      flashEffects.push({x:400, y:180, text:'💰 EMERGENCY FUNDS: +5 BILLS!', life:1.4});
+      spawnParticles(player.x+18, player.y, '#22c55e', 14, null);
+    }
+  } else {
+    deliveryBoss.moneyRespawnTimer = 0;
+  }
+
+  // Money hits boss
+  for (const m of moneyBills) {
+    if (m.life > 0 && rectOverlap({x:m.x-10,y:m.y-8,w:20,h:16}, {x:deliveryBoss.x,y:deliveryBoss.y,w:deliveryBoss.w,h:deliveryBoss.h})) {
+      m.life = 0;
+      deliveryBoss.hp--;
+      deliveryBoss.hitFlash = 18;
+      score += 250;
+      sfxBossHit();
+      spawnParticles(m.x, m.y, '#22c55e', 10, '-1 HP! 💰');
+      if (deliveryBoss.hp <= 0) {
+        deliveryBoss.dead = true;
+        deliveryBoss.taunt = "...you win this time.";
+        deliveryBoss.tauntTimer = 200;
+        for (let i=0;i<35;i++) {
+          spawnParticles(
+            deliveryBoss.x + Math.random()*deliveryBoss.w,
+            deliveryBoss.y + Math.random()*deliveryBoss.h,
+            ['#22c55e','#FFD700','#FF6B35'][i%3], 7, null);
+        }
+        score += 1500;
+      }
+    }
+  }
+
+  // Boss body contact
+  if (player.invincible === 0 && rectOverlap(player, {x:deliveryBoss.x,y:deliveryBoss.y,w:deliveryBoss.w,h:deliveryBoss.h})) {
+    loseLife();
+  }
+}
+
+function updateBombs() {
+  for (const b of bombs) {
+    if (b.life <= 0) continue;
+    b.vx *= 0.99;
+    b.vy += 0.3;
+    b.x += b.vx;
+    b.y += b.vy;
+    b.life -= 0.005;
+    if (b.y > canvas.height || b.x < 0 || b.x > canvas.width) b.life = 0;
+    // Bounce off platforms
+    for (const p of platforms) {
+      if (rectOverlap({x:b.x-8,y:b.y-8,w:16,h:16}, p)) {
+        b.vy = -Math.abs(b.vy) * 0.5;
+        b.y = p.y - 8;
+        if (Math.abs(b.vy) < 0.5) b.life = 0;
+      }
+    }
+  }
+  bombs = bombs.filter(b => b.life > 0);
+
+  // Boss projectiles
+  for (const bp of bossProjectiles) {
+    bp.x += bp.vx;
+    bp.y += bp.vy;
+    bp.rot = (bp.rot||0) + (bp.spin||0.08);
+    bp.life -= 0.008;
+    if (bp.y > canvas.height) bp.life = 0;
+    if (player.invincible === 0 && rectOverlap(player, {x:bp.x-10,y:bp.y-10,w:20,h:20})) {
+      loseLife();
+      bp.life = 0;
+    }
+  }
+  bossProjectiles = bossProjectiles.filter(bp => bp.life > 0);
+
+  // Money bills
+  for (const m of moneyBills) {
+    if (m.life <= 0) continue;
+    m.x += m.vx; m.y += m.vy;
+    m.vy += 0.25;
+    m.rot += m.spin;
+    m.life -= 0.004;
+    if (m.y > canvas.height || m.x < -30 || m.x > canvas.width+30) m.life = 0;
+    for (const p of platforms) {
+      if (rectOverlap({x:m.x-10,y:m.y-5,w:20,h:10}, p)) { m.vy = -Math.abs(m.vy)*0.4; m.y = p.y-5; if(Math.abs(m.vy)<0.5) m.life=0; }
+    }
+  }
+  moneyBills = moneyBills.filter(m => m.life > 0);
+
+  // Packages
+  for (const pk of packages) {
+    pk.x += pk.vx; pk.y += pk.vy;
+    pk.vy += 0.35;
+    pk.rot += pk.spin;
+    pk.life -= 0.005;
+    if (pk.y > canvas.height) pk.life = 0;
+    for (const p of platforms) {
+      if (rectOverlap({x:pk.x-12,y:pk.y-12,w:24,h:24}, p)) {
+        pk.vy = -Math.abs(pk.vy)*0.4; pk.vx *= 0.7;
+        pk.y = p.y - 12;
+        if (Math.abs(pk.vy) < 0.5) pk.life = 0;
+      }
+    }
+    if (player.invincible === 0 && rectOverlap(player, {x:pk.x-14,y:pk.y-14,w:28,h:28})) {
+      loseLife(); pk.life = 0;
+    }
+  }
+  packages = packages.filter(pk => pk.life > 0);
+}
+
+function updateParticles() {
+  particles = particles.filter(p => p.life > 0);
+  for (const p of particles) {
+    p.x += p.vx; p.y += p.vy;
+    p.vy += 0.15;
+    p.life -= 0.025;
+  }
+  flashEffects = flashEffects.filter(f => f.life > 0);
+  for (const f of flashEffects) f.life -= 0.02;
+}
+
+// ─── DRAWING ─────────────────────────────────────────────────────────────────
+
+function drawBackground() {
+  const lv = LEVELS[currentLevel] || LEVELS[0];
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, lv.bgColors[0]);
+  grad.addColorStop(1, lv.bgColors[1]);
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Decorative BG elements
+  if (lv.isBossLevel) {
+    // Creepy bathroom tiles
+    ctx.globalAlpha = 0.18;
+    ctx.strokeStyle = '#a855f7';
+    ctx.lineWidth = 1;
+    for (let tx = 0; tx < 800; tx += 50) {
+      for (let ty = 0; ty < 460; ty += 50) {
+        ctx.strokeRect(tx, ty, 50, 50);
+      }
+    }
+    // Drip marks
+    ctx.fillStyle='#6d28d9';
+    for(let d=0;d<8;d++){
+      const dx=80+d*90, dy=20+Math.sin(d)*30;
+      ctx.beginPath(); ctx.moveTo(dx,dy); ctx.lineTo(dx,dy+40+d*8);
+      ctx.lineWidth=3+d%3; ctx.strokeStyle='#6d28d9'; ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(dx,dy+40+d*8,5,8,0,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  } else {
+    // X-Cumpany graffiti scrawled on the office walls
+    const graffitiPositions = [
+      {x:55,  y:95,  rot:-0.18, size:28, alpha:0.10},
+      {x:220, y:150, rot: 0.08, size:22, alpha:0.08},
+      {x:400, y:70,  rot:-0.06, size:32, alpha:0.09},
+      {x:580, y:130, rot: 0.14, size:25, alpha:0.10},
+      {x:680, y:210, rot:-0.10, size:20, alpha:0.07},
+      {x:130, y:280, rot: 0.12, size:18, alpha:0.08},
+      {x:490, y:240, rot:-0.05, size:24, alpha:0.09},
+      {x:330, y:310, rot: 0.09, size:19, alpha:0.07},
+    ];
+    ctx.save();
+    ctx.font = 'bold italic 28px Comic Sans MS, cursive';
+    for (const g of graffitiPositions) {
+      ctx.save();
+      ctx.globalAlpha = g.alpha;
+      ctx.translate(g.x, g.y);
+      ctx.rotate(g.rot);
+      ctx.font = `bold italic ${g.size}px Comic Sans MS, cursive`;
+      // Spray-paint outline effect
+      ctx.strokeStyle = lv.accentColor;
+      ctx.lineWidth = g.size * 0.25;
+      ctx.lineJoin = 'round';
+      ctx.strokeText('X-Cumpany', 0, 0);
+      ctx.fillStyle = lv.accentColor;
+      ctx.fillText('X-Cumpany', 0, 0);
+      ctx.restore();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawPlatform(p) {
+  const types = {
+    floor:   { fill:'#8B7355', stroke:'#5d4e37', detail:'#a08060' },
+    desk:    { fill:'#d4a044', stroke:'#8B6914', detail:'#e8c070' },
+    cabinet: { fill:'#607D8B', stroke:'#37474F', detail:'#90A4AE' },
+    shelf:   { fill:'#795548', stroke:'#4E342E', detail:'#A1887F' },
+    table:   { fill:'#5D4037', stroke:'#3E2723', detail:'#8D6E63' },
+  };
+  const s = types[p.type] || types.desk;
+  ctx.fillStyle = s.fill;
+  ctx.beginPath();
+  ctx.roundRect(p.x, p.y, p.w, p.h, p.type==='floor'?2:6);
+  ctx.fill();
+  ctx.strokeStyle = s.stroke;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  // Top shine
+  ctx.fillStyle = s.detail;
+  ctx.fillRect(p.x+4, p.y+3, p.w-8, 4);
+  // Desk legs
+  if (p.type !== 'floor') {
+    ctx.fillStyle = s.stroke;
+    ctx.fillRect(p.x+6, p.y+p.h, 8, 10);
+    ctx.fillRect(p.x+p.w-14, p.y+p.h, 8, 10);
+  }
+}
+
+function drawCollectible(c) {
+  if (c.collected) return;
+  const bob = Math.sin(Date.now()/400 + c.x) * 3;
+  ctx.save();
+  ctx.translate(c.x, c.y + bob);
+
+  if (c.type === 'report') {
+    // Clipboard
+    ctx.fillStyle = '#F5F5F5';
+    ctx.beginPath(); ctx.roundRect(-12,-14,24,28,3); ctx.fill();
+    ctx.strokeStyle = '#999'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle = '#E0E0E0';
+    ctx.fillRect(-8,-10,16,2); ctx.fillRect(-8,-5,16,2); ctx.fillRect(-8,0,10,2);
+    // Clipboard top
+    ctx.fillStyle = '#888';
+    ctx.beginPath(); ctx.roundRect(-5,-17,10,6,3); ctx.fill();
+    // Quality star
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 9px serif'; ctx.textAlign='center'; ctx.fillText('★',0,11);
+  } else if (c.type === 'iso') {
+    // ISO Standard Bomb
+    const glow = 0.7 + Math.sin(Date.now()/300 + c.x)*0.3;
+    ctx.shadowColor='#a855f7'; ctx.shadowBlur=12*glow;
+    ctx.fillStyle='#1a1a2e';
+    ctx.beginPath(); ctx.arc(0,0,13,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#a855f7'; ctx.lineWidth=2.5; ctx.stroke();
+    ctx.shadowBlur=0;
+    ctx.fillStyle='white'; ctx.font='bold 8px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('ISO',0,3);
+    // Fuse
+    ctx.strokeStyle='#FFD700'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(8,-8); ctx.quadraticCurveTo(14,-16,10,-22); ctx.stroke();
+    ctx.fillStyle='#FF8800'; ctx.beginPath(); ctx.arc(10,-22,3.5,0,Math.PI*2); ctx.fill();
+  } else {
+    // Toilet paper roll
+    ctx.fillStyle = '#F5F5F5';
+    ctx.beginPath(); ctx.ellipse(0,0,12,14,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#DDD'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.fillStyle = '#E8E8E8';
+    ctx.beginPath(); ctx.ellipse(0,0,5,6,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#CCC'; ctx.stroke();
+    // Lines
+    ctx.strokeStyle = '#DDD'; ctx.lineWidth=1;
+    for(let l=-4;l<=4;l+=2){ctx.beginPath();ctx.moveTo(-12,l);ctx.lineTo(12,l);ctx.stroke();}
+  }
+  ctx.restore();
+}
+
+function drawColleague(e) {
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.scale(e.dir, 1); // face direction of travel
+
+  // Walking legs
+  const walk = Math.sin((e.bobTimer||0)*6)*10;
+  ctx.fillStyle='#5C6BC0';
+  ctx.save(); ctx.translate(-6,18); ctx.rotate(walk*Math.PI/180);
+  ctx.fillRect(-4,0,8,16); ctx.restore();
+  ctx.save(); ctx.translate(6,18); ctx.rotate(-walk*Math.PI/180);
+  ctx.fillRect(-4,0,8,16); ctx.restore();
+  // Shoes
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(-6,35,7,4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(6,35,7,4,0,0,Math.PI*2); ctx.fill();
+
+  // Body - office casual
+  ctx.fillStyle='#7E57C2';
+  ctx.beginPath(); ctx.roundRect(-12,2,24,22,4); ctx.fill();
+  // Collar
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.moveTo(-5,2); ctx.lineTo(0,8); ctx.lineTo(5,2); ctx.fill();
+
+  // Arms swinging
+  ctx.fillStyle='#7E57C2';
+  ctx.save(); ctx.translate(-13,6); ctx.rotate(-walk*Math.PI/180);
+  ctx.fillRect(-4,0,8,14); ctx.restore();
+  ctx.save(); ctx.translate(13,6); ctx.rotate(walk*Math.PI/180);
+  ctx.fillRect(-4,0,8,14); ctx.restore();
+
+  // Head
+  ctx.fillStyle='#FDBCB4';
+  ctx.beginPath(); ctx.ellipse(0,-12,11,12,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#e0a090'; ctx.lineWidth=1; ctx.stroke();
+
+  // Hair (varies by name)
+  const hairColor = e.name==='Karen'?'#FFD700': e.name==='Dave'?'#4a3000':'#555';
+  ctx.fillStyle=hairColor;
+  ctx.beginPath(); ctx.ellipse(0,-22,11,6,0,Math.PI,Math.PI*2); ctx.fill();
+
+  // Suspicious eyes (wide, looking for Devi)
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-4,-13,4,4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(4,-13,4,4,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(-4,-13,2.5,2.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(4,-13,2.5,2.5,0,0,Math.PI*2); ctx.fill();
+  // Raised eyebrows (suspicious)
+  ctx.strokeStyle='#333'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-8,-20); ctx.lineTo(-1,-18); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(8,-20); ctx.lineTo(1,-18); ctx.stroke();
+
+  // Name badge
+  ctx.fillStyle='white'; ctx.globalAlpha=0.9;
+  ctx.beginPath(); ctx.roundRect(-14,6,28,10,3); ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#3949AB'; ctx.font='bold 6px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(e.name||'?', 0, 14);
+
+  // "Looking..." thought bubble
+  const lookPulse = 0.6 + Math.sin(Date.now()/300)*0.4;
+  ctx.globalAlpha=lookPulse*0.9;
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.arc(16,-28,10,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#ccc'; ctx.lineWidth=1; ctx.stroke();
+  ctx.beginPath(); ctx.arc(22,-20,4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(26,-15,2,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+  ctx.fillStyle='#333'; ctx.font='8px serif'; ctx.textAlign='center';
+  ctx.fillText('👀',16,-28);
+
+  ctx.restore();
+}
+
+function drawEnemy(e) {
+  ctx.save();
+  ctx.translate(e.x, e.y + (e.dy||0));
+
+  if (e.type === 'colleague') {
+    ctx.restore();
+    drawColleague(e);
+    return;
+  } else if (e.type === 'recall') {
+    // Bouncy red warning hazard
+    const pulse = 0.85 + Math.sin(Date.now()/200)*0.15;
+    ctx.scale(pulse, pulse);
+    // Warning triangle
+    ctx.fillStyle = '#FF3333';
+    ctx.beginPath();
+    ctx.moveTo(0, -18); ctx.lineTo(16, 12); ctx.lineTo(-16, 12);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#CC0000'; ctx.lineWidth=2; ctx.stroke();
+    // White border
+    ctx.strokeStyle='white'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(12,10); ctx.lineTo(-12,10); ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = 'white';
+    ctx.font = 'bold 14px serif'; ctx.textAlign='center'; ctx.fillText('!',0,10);
+    ctx.font = 'bold 7px sans-serif'; ctx.fillText('RECALL',0,22);
+  } else {
+    // Bart – suit-wearing manager
+    // Body (suit)
+    ctx.fillStyle = '#2c3e50';
+    ctx.beginPath(); ctx.roundRect(-13,2,26,22,4); ctx.fill();
+    // Tie
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath(); ctx.moveTo(0,3); ctx.lineTo(4,8); ctx.lineTo(2,20); ctx.lineTo(-2,20); ctx.lineTo(-4,8); ctx.closePath(); ctx.fill();
+    // Shirt collar
+    ctx.fillStyle='white';
+    ctx.beginPath(); ctx.moveTo(-5,3); ctx.lineTo(0,8); ctx.lineTo(5,3); ctx.closePath(); ctx.fill();
+    // Head
+    ctx.fillStyle = '#FDBCB4';
+    ctx.beginPath(); ctx.ellipse(0,-10,11,12,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#e0a090'; ctx.lineWidth=1; ctx.stroke();
+    // Hair (grey/receding)
+    ctx.fillStyle = '#888';
+    ctx.beginPath(); ctx.ellipse(0,-20,11,5,0,Math.PI,Math.PI*2); ctx.fill();
+    // Eyes (angry)
+    ctx.fillStyle='#333';
+    ctx.beginPath(); ctx.ellipse(-4,-10,3,2.5,0.3,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(4,-10,3,2.5,-0.3,0,Math.PI*2); ctx.fill();
+    // Eyebrows (furrowed)
+    ctx.strokeStyle='#333'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(-7,-14); ctx.lineTo(-1,-12); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(7,-14); ctx.lineTo(1,-12); ctx.stroke();
+    // Mouth (frown)
+    ctx.beginPath(); ctx.arc(0,-5,4,0.3,Math.PI-0.3); ctx.stroke();
+    // Briefcase
+    ctx.fillStyle='#8B6914';
+    ctx.beginPath(); ctx.roundRect(12,8,12,10,2); ctx.fill();
+    ctx.strokeStyle='#5d4010'; ctx.lineWidth=1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(18,8,4,Math.PI,0); ctx.stroke();
+    // "RESTRUCTURE" tag
+    ctx.fillStyle='#e74c3c'; ctx.globalAlpha=0.9;
+    ctx.beginPath(); ctx.roundRect(-14,26,28,11,3); ctx.fill();
+    ctx.globalAlpha=1;
+    ctx.fillStyle='white'; ctx.font='bold 6px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('RESTRUCTURE',0,34);
+  }
+  ctx.restore();
+}
+
+function drawDevi() {
+  const p = player;
+  const bob = p.onGround ? 0 : (p.vy < 0 ? -3 : 2);
+  const walkBob = p.onGround && Math.abs(p.vx) > 0.5 ? Math.sin(p.frame * Math.PI/2) * 2 : 0;
+  const invFlash = p.invincible > 0 && Math.floor(p.invincible/5) % 2 === 0;
+
+  ctx.save();
+  ctx.globalAlpha = invFlash ? 0.4 : 1.0;
+  ctx.translate(p.x + p.w/2, p.y + p.h/2 + bob + walkBob);
+  ctx.scale(p.facing, 1);
+
+  // Legs
+  const legSwing = p.onGround && Math.abs(p.vx) > 0.5 ? Math.sin(p.frame * Math.PI/2) * 8 : 0;
+  ctx.fillStyle = '#1a1a2e';
+  // Left leg
+  ctx.save(); ctx.translate(-7, 14);
+  ctx.rotate(legSwing * Math.PI/180);
+  ctx.fillRect(-4,0,8,14); ctx.restore();
+  // Right leg
+  ctx.save(); ctx.translate(7, 14);
+  ctx.rotate(-legSwing * Math.PI/180);
+  ctx.fillRect(-4,0,8,14); ctx.restore();
+  // Shoes
+  ctx.fillStyle = '#333';
+  ctx.beginPath(); ctx.ellipse(-7,29,8,4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7,29,8,4,0,0,Math.PI*2); ctx.fill();
+
+  // Body – Suriname flag shirt (clipped to shirt shape)
+  ctx.save();
+  // Clip to shirt outline
+  ctx.beginPath(); ctx.roundRect(-12,2,24,22,5); ctx.clip();
+  // Suriname flag stripes: green / white / red / white / green
+  // shirt is 24px wide, 22px tall (y: 2 to 24)
+  ctx.fillStyle='#377E3F'; ctx.fillRect(-12,2,24,3);   // top green (2-5)
+  ctx.fillStyle='white';   ctx.fillRect(-12,5,24,2);   // white (5-7)
+  ctx.fillStyle='#B40A2D'; ctx.fillRect(-12,7,24,12);  // red (7-19)
+  ctx.fillStyle='white';   ctx.fillRect(-12,19,24,2);  // white (19-21)
+  ctx.fillStyle='#377E3F'; ctx.fillRect(-12,21,24,3);  // bottom green (21-24)
+  // Yellow star in centre of red band
+  ctx.fillStyle='#F9D616';
+  ctx.save();
+  ctx.translate(0,13);
+  ctx.beginPath();
+  for(let i=0;i<5;i++){
+    const a=i*Math.PI*2/5-Math.PI/2;
+    const ia=a+Math.PI/5;
+    i===0?ctx.moveTo(Math.cos(a)*5,Math.sin(a)*5):ctx.lineTo(Math.cos(a)*5,Math.sin(a)*5);
+    ctx.lineTo(Math.cos(ia)*2.2,Math.sin(ia)*2.2);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+  // Shirt outline
+  ctx.strokeStyle='#1a5c20'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.roundRect(-12,2,24,22,5); ctx.stroke();
+
+  // Arms
+  const armSwing = p.onGround && Math.abs(p.vx) > 0.5 ? Math.sin(p.frame * Math.PI/2) * 15 : 0;
+  ctx.fillStyle = '#377E3F';
+  ctx.save(); ctx.translate(-13,5); ctx.rotate(-armSwing * Math.PI/180);
+  // Suriname green sleeve
+  ctx.fillRect(-4,0,8,6);
+  ctx.fillStyle='#B40A2D'; ctx.fillRect(-4,6,8,8);
+  ctx.restore();
+  ctx.save(); ctx.translate(13,5); ctx.rotate(armSwing * Math.PI/180);
+  ctx.fillStyle='#377E3F'; ctx.fillRect(-4,0,8,6);
+  ctx.fillStyle='#B40A2D'; ctx.fillRect(-4,6,8,8);
+  // Hand with clipboard
+  ctx.fillStyle='#FDBCB4'; ctx.beginPath(); ctx.ellipse(0,16,5,5,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // Neck - broader to match photo
+  ctx.fillStyle = '#E8A882';
+  ctx.beginPath(); ctx.roundRect(-5,-5,10,8,2); ctx.fill();
+
+  // Head - rounder, fuller face like photo
+  ctx.fillStyle = '#E8A882';
+  ctx.beginPath(); ctx.ellipse(0,-14,14,15,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=1; ctx.stroke();
+
+  // Short dark buzzcut — tight to head, flat top
+  ctx.fillStyle = '#1a1010';
+  // Top flat crop
+  ctx.beginPath(); ctx.ellipse(0,-27,13,5,0,Math.PI,Math.PI*2); ctx.fill();
+  // Sides close-cropped — thin strips
+  ctx.beginPath(); ctx.ellipse(-12,-19,3,8,0.25,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(12,-19,3,8,-0.25,0,Math.PI*2); ctx.fill();
+  // Hairline definition
+  ctx.strokeStyle='#1a1010'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-13,-22); ctx.quadraticCurveTo(0,-30,13,-22); ctx.stroke();
+
+  // Clean shaven — subtle jaw shadow only
+  ctx.fillStyle='rgba(180,120,80,0.18)';
+  ctx.beginPath(); ctx.ellipse(0,-3,10,5,0,0,Math.PI*2); ctx.fill();
+
+  // Eyebrows — dark, fairly thick, straight
+  ctx.fillStyle='#1a1010';
+  ctx.save(); ctx.translate(-7,-19); ctx.rotate(-0.05);
+  ctx.beginPath(); ctx.roundRect(-5,-2,10,3.5,1); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(7,-19); ctx.rotate(0.05);
+  ctx.beginPath(); ctx.roundRect(-5,-2,10,3.5,1); ctx.fill(); ctx.restore();
+
+  // Eyes — dark brown, slightly hooded
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-7,-15,4.5,3.5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7,-15,4.5,3.5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#2c1200';
+  ctx.beginPath(); ctx.ellipse(-7,-15,2.8,2.8,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7,-15,2.8,2.8,0,0,Math.PI*2); ctx.fill();
+  // Pupils
+  ctx.fillStyle='#0a0500';
+  ctx.beginPath(); ctx.ellipse(-7,-15,1.4,1.4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(7,-15,1.4,1.4,0,0,Math.PI*2); ctx.fill();
+  // Eye shine
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-6,-16,1,1,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(8,-16,1,1,0,0,Math.PI*2); ctx.fill();
+  // Eyelid crease — subtle
+  ctx.strokeStyle='rgba(160,80,40,0.4)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(-7,-14,4.5,-Math.PI,-0.1); ctx.stroke();
+  ctx.beginPath(); ctx.arc(7,-14,4.5,-Math.PI,-0.1); ctx.stroke();
+
+  // Nose — simple cartoon bump
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-2,-11); ctx.quadraticCurveTo(-4,-8,-2,-6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(2,-11); ctx.quadraticCurveTo(4,-8,2,-6); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-3,-6); ctx.quadraticCurveTo(0,-5,3,-6); ctx.stroke();
+
+  // Neutral-to-slight smile (relaxed like photo)
+  ctx.strokeStyle='#b06040'; ctx.lineWidth=1.8;
+  ctx.beginPath(); ctx.arc(0,-3,5,0.15,Math.PI-0.15); ctx.stroke();
+  // Lip line
+  ctx.strokeStyle='rgba(160,80,50,0.5)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(-4,-3); ctx.lineTo(4,-3); ctx.stroke();
+
+  // Ears
+  ctx.fillStyle='#E8A882';
+  ctx.beginPath(); ctx.ellipse(-15,-14,4,6,0.2,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=1; ctx.stroke();
+  ctx.beginPath(); ctx.ellipse(15,-14,4,6,-0.2,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  // Inner ear
+  ctx.strokeStyle='#c8886a'; ctx.lineWidth=0.8;
+  ctx.beginPath(); ctx.arc(-15,-14,2,0.3,Math.PI*2-0.3); ctx.stroke();
+  ctx.beginPath(); ctx.arc(15,-14,2,0.3,Math.PI*2-0.3); ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawToiletBoss(b) {
+  if (b.dead) return;
+  ctx.save();
+  ctx.translate(b.x + b.w/2, b.y + b.h/2);
+  if (b.hitFlash > 0) { ctx.globalAlpha = 0.5 + Math.sin(b.hitFlash*0.8)*0.5; }
+  const s = b.phase === 2 ? (0.95 + Math.sin(Date.now()/80)*0.05) : 1;
+  ctx.scale(s, s);
+
+  // Toilet base / pedestal
+  ctx.fillStyle = b.hitFlash > 0 ? '#FF8888' : '#E8E8F0';
+  ctx.beginPath();
+  ctx.ellipse(0, 34, 34, 18, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#BBBBC8'; ctx.lineWidth=2; ctx.stroke();
+
+  // Toilet tank (back)
+  ctx.fillStyle = b.hitFlash > 0 ? '#FFAAAA' : '#F0F0FF';
+  ctx.beginPath(); ctx.roundRect(-22, -40, 44, 44, 8); ctx.fill();
+  ctx.strokeStyle='#BBBBC8'; ctx.lineWidth=2; ctx.stroke();
+  // Tank details
+  ctx.fillStyle='#DDD'; ctx.fillRect(-16,-34,32,4); ctx.fillRect(-16,-25,32,2);
+  // Handle
+  ctx.fillStyle='#AAA';
+  ctx.beginPath(); ctx.roundRect(18,-36,10,16,4); ctx.fill();
+
+  // Toilet bowl
+  ctx.fillStyle = b.hitFlash > 0 ? '#FFAAAA' : '#F5F5FF';
+  ctx.beginPath(); ctx.ellipse(0, 10, 28, 22, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#BBBBC8'; ctx.lineWidth=2; ctx.stroke();
+  // Water inside
+  ctx.fillStyle = b.phase === 2 ? 'rgba(255,80,80,0.6)' : 'rgba(100,200,255,0.6)';
+  ctx.beginPath(); ctx.ellipse(0, 14, 18, 12, 0, 0, Math.PI*2); ctx.fill();
+
+  // Angry eyes on tank
+  const eyeOff = b.dir < 0 ? -3 : 3;
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.ellipse(-10+eyeOff,-20,5,6,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10+eyeOff,-20,5,6,0,0,Math.PI*2); ctx.fill();
+  // Angry eyebrows
+  ctx.strokeStyle='#111'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(-16+eyeOff,-28); ctx.lineTo(-4+eyeOff,-24); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(16+eyeOff,-28); ctx.lineTo(4+eyeOff,-24); ctx.stroke();
+  // Mouth (grimace)
+  ctx.strokeStyle='#333'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(eyeOff,-12,8,0.3,Math.PI-0.3); ctx.stroke();
+  // Teeth
+  ctx.fillStyle='white';
+  for(let t=-2;t<=2;t++) ctx.fillRect(eyeOff+t*5-2,-10,4,5);
+
+  // Phase 2: steam/rage lines
+  if (b.phase === 2) {
+    ctx.strokeStyle='#FF6644'; ctx.lineWidth=3; ctx.globalAlpha=0.7;
+    for(let i=0;i<4;i++){
+      const ox=-15+i*10, oy=-42;
+      ctx.beginPath();
+      ctx.moveTo(ox,oy);
+      ctx.quadraticCurveTo(ox+5,oy-10,ox,oy-20);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = b.hitFlash>0 ? 0.5 : 1;
+  }
+
+  ctx.restore();
+}
+
+function drawDeliveryGuy(b) {
+  if (!b) return;
+  ctx.save();
+  const sx = b.shakeX || 0;
+  ctx.translate(b.x + b.w/2 + sx, b.y + b.h/2);
+  ctx.scale(b.dir < 0 ? 1 : -1, 1);
+  if (b.hitFlash > 0) ctx.globalAlpha = 0.5 + Math.sin(b.hitFlash*0.8)*0.5;
+
+  const walkCycle = Math.sin(Date.now()/80) * (b.dead ? 0 : 1);
+
+  // MASSIVE legs
+  ctx.fillStyle='#1e3a5f';
+  // Left leg
+  ctx.save(); ctx.translate(-22, 34);
+  ctx.rotate(walkCycle * 0.25);
+  ctx.fillRect(-10,0,20,38); ctx.restore();
+  // Right leg
+  ctx.save(); ctx.translate(22, 34);
+  ctx.rotate(-walkCycle * 0.25);
+  ctx.fillRect(-10,0,20,38); ctx.restore();
+  // Big boots
+  ctx.fillStyle='#111';
+  ctx.beginPath(); ctx.ellipse(-22,73,16,8,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(22,73,16,8,0,0,Math.PI*2); ctx.fill();
+
+  // Massive torso - delivery uniform
+  ctx.fillStyle = b.hitFlash > 0 ? '#FF6B35' : '#1e3a8a';
+  ctx.beginPath(); ctx.roundRect(-34,-10,68,50,8); ctx.fill();
+  // Uniform logo patch
+  ctx.fillStyle='#FF6B35';
+  ctx.beginPath(); ctx.roundRect(-8,0,16,14,3); ctx.fill();
+  ctx.fillStyle='white'; ctx.font='bold 7px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('DEL',0,10);
+  // Muscle definition lines on shirt
+  ctx.strokeStyle='rgba(0,0,50,0.3)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,-5); ctx.lineTo(0,35); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-20,5); ctx.bezierCurveTo(-15,15,-5,20,0,20); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(20,5); ctx.bezierCurveTo(15,15,5,20,0,20); ctx.stroke();
+
+  // MASSIVE arms
+  ctx.fillStyle='#FDBCB4';
+  // Left arm - huge bicep
+  ctx.save(); ctx.translate(-42, -5);
+  ctx.rotate(walkCycle * 0.15 - 0.2);
+  ctx.fillStyle='#1e3a8a';
+  ctx.beginPath(); ctx.ellipse(0,0,14,18,0,0,Math.PI*2); ctx.fill(); // bicep
+  ctx.fillStyle='#FDBCB4';
+  ctx.fillRect(-10,14,20,20); // forearm
+  ctx.beginPath(); ctx.ellipse(0,36,10,10,0,0,Math.PI*2); ctx.fill(); // fist
+  ctx.restore();
+  // Right arm
+  ctx.save(); ctx.translate(42,-5);
+  ctx.rotate(-walkCycle*0.15 + 0.2);
+  ctx.fillStyle='#1e3a8a';
+  ctx.beginPath(); ctx.ellipse(0,0,14,18,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#FDBCB4';
+  ctx.fillRect(-10,14,20,20);
+  ctx.beginPath(); ctx.ellipse(0,36,10,10,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // THICK neck
+  ctx.fillStyle='#FDBCB4';
+  ctx.beginPath(); ctx.ellipse(0,-18,14,16,0,0,Math.PI*2); ctx.fill();
+
+  // BIG head
+  ctx.fillStyle='#FDBCB4';
+  ctx.beginPath(); ctx.ellipse(0,-40,26,28,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#e0a090'; ctx.lineWidth=1; ctx.stroke();
+
+  // Angry square jaw
+  ctx.fillStyle='#FDBCB4';
+  ctx.beginPath(); ctx.roundRect(-22,-50,44,20,4); ctx.fill();
+
+  // Hair - buzzcut
+  ctx.fillStyle='#2d1506';
+  ctx.beginPath(); ctx.ellipse(0,-56,26,10,0,Math.PI,Math.PI*2); ctx.fill();
+  // Stubble
+  ctx.fillStyle='rgba(45,21,6,0.4)';
+  for(let s=0;s<8;s++){
+    const sx2=Math.cos(s*0.8)*14, sy=Math.sin(s*0.5)*8-35;
+    ctx.beginPath(); ctx.arc(sx2,sy,1.5,0,Math.PI*2); ctx.fill();
+  }
+
+  // Angry eyes - squinted
+  ctx.fillStyle='white';
+  ctx.beginPath(); ctx.ellipse(-10,-44,7,4,0.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10,-44,7,4,-0.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#1a0800';
+  ctx.beginPath(); ctx.ellipse(-10,-44,4,3,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10,-44,4,3,0,0,Math.PI*2); ctx.fill();
+  // Angry veins on forehead
+  ctx.strokeStyle='#c0392b'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(-8,-60); ctx.quadraticCurveTo(-4,-56,0,-58); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(5,-59); ctx.quadraticCurveTo(8,-55,12,-57); ctx.stroke();
+  // Angry eyebrows - THICK
+  ctx.fillStyle='#2d1506'; ctx.lineWidth=0;
+  ctx.save(); ctx.translate(-10,-50); ctx.rotate(-0.4);
+  ctx.fillRect(-8,-3,16,6); ctx.restore();
+  ctx.save(); ctx.translate(10,-50); ctx.rotate(0.4);
+  ctx.fillRect(-8,-3,16,6); ctx.restore();
+
+  // Scar
+  ctx.strokeStyle='#c0392b'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(15,-55); ctx.lineTo(18,-40); ctx.stroke();
+
+  // Delivery cap
+  ctx.fillStyle='#1e3a8a';
+  ctx.beginPath(); ctx.ellipse(0,-62,28,8,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(-28,-72,56,12,4); ctx.fill();
+  ctx.fillStyle='#FF6B35';
+  ctx.beginPath(); ctx.roundRect(-10,-70,20,8,2); ctx.fill();
+  ctx.fillStyle='white'; ctx.font='bold 5px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('XPRESS',0,-64);
+
+  // Dead: X eyes
+  if (b.dead) {
+    ctx.fillStyle='#333'; ctx.font='bold 20px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('X',-10,-44); ctx.fillText('X',10,-44);
+    ctx.strokeStyle='#FFD700'; ctx.lineWidth=2;
+    for(let s=0;s<6;s++){
+      const a=s*Math.PI/3;
+      ctx.beginPath(); ctx.moveTo(Math.cos(a)*20,-70); ctx.lineTo(Math.cos(a)*35,-70); ctx.stroke();
+    }
+  }
+
+  ctx.restore();
+
+  // Speech bubble drawn in screen space AFTER restore so it never flips
+  if (b.tauntTimer > 0 && b.taunt) {
+    const alpha = Math.min(1, b.tauntTimer/20);
+    // Screen position: centre top of boss
+    const bsx = b.x + b.w/2 + (b.shakeX||0);
+    const bsy = b.y - 18;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.font = 'bold 11px Comic Sans MS, cursive';
+    ctx.textAlign = 'center';
+    const tw = ctx.measureText(b.taunt).width;
+    const bw2 = tw + 22, bh2 = 26;
+    // Bubble
+    ctx.fillStyle = 'white';
+    ctx.beginPath(); ctx.roundRect(bsx - bw2/2, bsy - bh2, bw2, bh2, 7); ctx.fill();
+    ctx.strokeStyle = '#FF6B35'; ctx.lineWidth = 2.5; ctx.stroke();
+    // Tail pointing down
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.moveTo(bsx - 7, bsy);
+    ctx.lineTo(bsx, bsy + 11);
+    ctx.lineTo(bsx + 7, bsy);
+    ctx.fill();
+    ctx.strokeStyle = '#FF6B35'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(bsx - 7, bsy); ctx.lineTo(bsx, bsy + 11); ctx.lineTo(bsx + 7, bsy); ctx.stroke();
+    // Text
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillText(b.taunt, bsx, bsy - bh2/2 + 5);
+    ctx.restore();
+  }
+}
+
+function drawMoneyAndPackages() {
+  // Money bills
+  for (const m of moneyBills) {
+    ctx.save();
+    ctx.globalAlpha = m.life;
+    ctx.translate(m.x, m.y);
+    ctx.rotate(m.rot);
+    ctx.fillStyle='#15803d';
+    ctx.beginPath(); ctx.roundRect(-18,-9,36,18,3); ctx.fill();
+    ctx.fillStyle='#22c55e';
+    ctx.beginPath(); ctx.roundRect(-16,-7,32,14,2); ctx.fill();
+    ctx.fillStyle='#86efac'; ctx.font='bold 8px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('$$$',0,3);
+    ctx.restore();
+  }
+
+  // Packages
+  for (const pk of packages) {
+    ctx.save();
+    ctx.globalAlpha = pk.life;
+    ctx.translate(pk.x, pk.y);
+    ctx.rotate(pk.rot);
+    const sz = pk.big ? 18 : 13;
+    ctx.fillStyle='#92400e';
+    ctx.beginPath(); ctx.roundRect(-sz,-sz,sz*2,sz*2,3); ctx.fill();
+    ctx.strokeStyle='#78350f'; ctx.lineWidth=1.5; ctx.stroke();
+    // Tape strips
+    ctx.strokeStyle='#fef3c7'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(-sz,0); ctx.lineTo(sz,0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,-sz); ctx.lineTo(0,sz); ctx.stroke();
+    // Label
+    ctx.fillStyle='white';
+    ctx.beginPath(); ctx.roundRect(-sz*0.4,-sz*0.35,sz*0.8,sz*0.7,2); ctx.fill();
+    ctx.fillStyle='#333'; ctx.font=`bold ${sz*0.4}px sans-serif`; ctx.textAlign='center';
+    ctx.fillText('FRAGILE',0,sz*0.15);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawDeliveryHUD() {
+  if (!deliveryBoss || deliveryBoss.dead) return;
+  const bw=400,bh=22,bx=(canvas.width-bw)/2,by=56;
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.beginPath(); ctx.roundRect(bx-4,by-4,bw+8,bh+8,8); ctx.fill();
+  ctx.fillStyle='#333'; ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+  const pct=Math.max(0,deliveryBoss.hp/deliveryBoss.maxHp);
+  ctx.fillStyle=pct>0.5?'#FF6B35':pct>0.25?'#FFD740':'#FF1744';
+  ctx.beginPath(); ctx.roundRect(bx,by,bw*pct,bh,4); ctx.fill();
+  ctx.fillStyle='white'; ctx.font='bold 13px Comic Sans MS, cursive'; ctx.textAlign='center';
+  ctx.fillText('📦 THE DELIVERY GUY  '+deliveryBoss.hp+'/'+deliveryBoss.maxHp, canvas.width/2, by+16);
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(8,52,170,32,8); ctx.fill();
+  ctx.fillStyle='#22c55e'; ctx.font='bold 13px Comic Sans MS, cursive'; ctx.textAlign='left';
+  ctx.fillText('💰 BILLS: '+moneyCount+'  [Z] to throw', 16, 72);
+}
+
+function drawBombs() {
+  for (const b of bombs) {
+    ctx.save();
+    ctx.translate(b.x, b.y);
+    ctx.rotate(Date.now() / 200);
+    // Bomb body
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath(); ctx.arc(0, 0, 10, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#a855f7'; ctx.lineWidth=2; ctx.stroke();
+    // ISO label
+    ctx.fillStyle='white'; ctx.font='bold 7px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('ISO',0,2);
+    // Fuse
+    ctx.strokeStyle='#FFD700'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(6,-6); ctx.quadraticCurveTo(12,-14,8,-18); ctx.stroke();
+    // Spark
+    ctx.fillStyle='#FF8800';
+    ctx.beginPath(); ctx.arc(8,-18,3,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  // Boss roti projectiles
+  for (const bp of bossProjectiles) {
+    ctx.save();
+    ctx.globalAlpha = bp.life;
+    ctx.translate(bp.x, bp.y);
+    ctx.rotate(bp.rot || 0);
+    const isPhase2 = boss && boss.phase === 2;
+    // Roti bread base - flat round flatbread
+    ctx.fillStyle = isPhase2 ? '#c0392b' : '#D2691E';
+    ctx.beginPath(); ctx.ellipse(0, 0, 13, 11, 0, 0, Math.PI*2); ctx.fill();
+    // Slightly lighter centre
+    ctx.fillStyle = isPhase2 ? '#e74c3c' : '#DEB887';
+    ctx.beginPath(); ctx.ellipse(0, 0, 9, 7, 0, 0, Math.PI*2); ctx.fill();
+    // Char spots
+    ctx.fillStyle = isPhase2 ? '#7b241c' : '#8B4513';
+    for (let s=0;s<5;s++) {
+      const sx = Math.cos(s*1.26)*5, sy = Math.sin(s*1.26)*4;
+      ctx.beginPath(); ctx.ellipse(sx,sy,2,1.5,s,0,Math.PI*2); ctx.fill();
+    }
+    // Edge crust line
+    ctx.strokeStyle = isPhase2 ? '#922b21' : '#A0522D';
+    ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.ellipse(0,0,13,11,0,0,Math.PI*2); ctx.stroke();
+    ctx.restore();
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawSurvivalHUD() {
+  const lv = LEVELS[currentLevel];
+  if (!lv || !lv.isBathroomLevel) return;
+  const remaining = Math.max(0, Math.ceil((lv.survivalTime - survivalTimer) / 60));
+  const fraction = survivalTimer / lv.survivalTime;
+
+  // Timer bar at top centre
+  const bw = 300, bh = 26, bx = (canvas.width - bw)/2, by = 56;
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(bx-4,by-4,bw+8,bh+8,8); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+  // Fill colour shifts green -> yellow -> red as time runs out
+  const pct = 1 - fraction;
+  const timerColor = pct > 0.5 ? '#00E676' : pct > 0.25 ? '#FFD740' : '#FF1744';
+  ctx.fillStyle=timerColor;
+  ctx.beginPath(); ctx.roundRect(bx,by,bw*pct,bh,4); ctx.fill();
+
+  // Pulsing text when < 10 seconds
+  if (remaining <= 10) {
+    const pulse = 0.7 + Math.sin(Date.now()/100)*0.3;
+    ctx.globalAlpha = pulse;
+  }
+  ctx.fillStyle='white'; ctx.font='bold 14px Comic Sans MS, cursive'; ctx.textAlign='center';
+  ctx.fillText('🚽 HIDE! ' + remaining + 's remaining', canvas.width/2, by+18);
+  ctx.globalAlpha=1;
+
+  // Colleague proximity warning
+  for (const e of enemies) {
+    const dist = Math.hypot(e.x - player.x, e.y - player.y);
+    if (dist < 120) {
+      const warnAlpha = (1 - dist/120) * (0.5 + Math.sin(Date.now()/80)*0.5);
+      ctx.fillStyle='rgba(255,80,0,'+warnAlpha+')';
+      ctx.beginPath(); ctx.arc(e.x, e.y + (e.dy||0), dist/2, 0, Math.PI*2); ctx.fill();
+    }
+  }
+}
+
+function drawBossHUD() {
+  if (!boss || boss.dead) return;
+  // Boss HP bar
+  const bw = 400, bh = 22, bx = (canvas.width - bw)/2, by = 56;
+  ctx.fillStyle='rgba(0,0,0,0.6)';
+  ctx.beginPath(); ctx.roundRect(bx-4,by-4,bw+8,bh+8,8); ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+  const pct = Math.max(0, boss.hp / boss.maxHp);
+  const hpColor = pct > 0.5 ? '#44FF88' : pct > 0.25 ? '#FFD700' : '#FF4444';
+  ctx.fillStyle=hpColor;
+  ctx.beginPath(); ctx.roundRect(bx,by,bw*pct,bh,4); ctx.fill();
+  ctx.fillStyle='white'; ctx.font='bold 13px Comic Sans MS, cursive'; ctx.textAlign='center';
+  ctx.fillText('🚽 THE PORCELAIN MENACE  ' + boss.hp + '/' + boss.maxHp, canvas.width/2, by+16);
+
+  // ISO bombs counter
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(8,52,160,32,8); ctx.fill();
+  ctx.fillStyle='#a855f7'; ctx.font='bold 13px Comic Sans MS, cursive'; ctx.textAlign='left';
+  ctx.fillText('ISO BOMBS: ' + isoBombs + '  [Z] to throw', 16, 72);
+}
+
+function drawHUD() {
+  // Score
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(8,8,150,36,8); ctx.fill();
+  ctx.fillStyle='#FFD700'; ctx.font='bold 14px Comic Sans MS, cursive'; ctx.textAlign='left';
+  ctx.fillText('SCORE: ' + score, 18, 31);
+
+  // Level
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(300,8,200,36,8); ctx.fill();
+  ctx.fillStyle='white'; ctx.textAlign='center';
+  ctx.fillText((LEVELS[currentLevel]||{}).name || '', 400, 31);
+
+  // Lives
+  ctx.fillStyle='rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.roundRect(642,8,150,36,8); ctx.fill();
+  ctx.textAlign='right';
+  for (let i = 0; i < 3; i++) {
+    ctx.font = i < lives ? '22px serif' : '22px serif';
+    ctx.globalAlpha = i < lives ? 1 : 0.25;
+    ctx.fillText('💼', 782 - i*38, 33);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0, p.size * p.life), 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  for (const f of flashEffects) {
+    ctx.globalAlpha = f.life;
+    if (f.isBart) {
+      // Angry red speech bubble style
+      ctx.font = 'bold 13px Comic Sans MS, cursive';
+      ctx.textAlign = 'center';
+      const tw = ctx.measureText(f.text).width;
+      const bx = f.x - tw/2 - 6, by = f.y - (1-f.life)*30 - 18;
+      const bw = tw + 12, bh = 20;
+      ctx.fillStyle = '#e74c3c';
+      ctx.beginPath(); ctx.roundRect(bx, by, bw, bh, 5); ctx.fill();
+      ctx.strokeStyle='#922b21'; ctx.lineWidth=1.5; ctx.stroke();
+      // Bubble tail
+      ctx.beginPath(); ctx.moveTo(f.x-6, by+bh); ctx.lineTo(f.x, by+bh+8); ctx.lineTo(f.x+6, by+bh); ctx.fill();
+      ctx.fillStyle='white'; ctx.strokeStyle='white'; ctx.lineWidth=0;
+      ctx.fillText(f.text, f.x, by+bh-5);
+    } else {
+      ctx.fillStyle = '#FFD700';
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 3;
+      ctx.font = 'bold 18px Comic Sans MS, cursive';
+      ctx.textAlign = 'center';
+      ctx.strokeText(f.text, f.x, f.y - (1-f.life)*40);
+      ctx.fillText(f.text, f.x, f.y - (1-f.life)*40);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawOverlay(title, subtitle, hint, bgColor) {
+  ctx.fillStyle = bgColor || 'rgba(0,0,0,0.72)';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  // Card
+  ctx.fillStyle='rgba(255,255,255,0.95)';
+  ctx.beginPath(); ctx.roundRect(200,120,400,260,20); ctx.fill();
+  ctx.strokeStyle='#FFD700'; ctx.lineWidth=5; ctx.stroke();
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#1a1a2e'; ctx.font='bold 36px Comic Sans MS, cursive';
+  ctx.fillText(title, 400, 188);
+
+  ctx.fillStyle='#555'; ctx.font='18px Comic Sans MS, cursive';
+  const lines = subtitle.split('\n');
+  lines.forEach((l,i) => ctx.fillText(l, 400, 228 + i*28));
+
+  // Pulsing button
+  const pulse = 0.92 + Math.sin(Date.now()/300)*0.08;
+  ctx.save(); ctx.translate(400, 330); ctx.scale(pulse,pulse);
+  ctx.fillStyle='#FFD700';
+  ctx.beginPath(); ctx.roundRect(-110,-22,220,44,12); ctx.fill();
+  ctx.strokeStyle='#e6ac00'; ctx.lineWidth=3; ctx.stroke();
+  ctx.fillStyle='#1a1a2e'; ctx.font='bold 16px Comic Sans MS, cursive';
+  ctx.fillText(hint, 0, 7);
+  ctx.restore();
+}
+
+// ─── MAIN LOOP ────────────────────────────────────────────────────────────────
+function gameLoop() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  updateBombButton();
+  if (audioStarted) updateMusic();
+
+  if (gameState === STATE.INTRO) {
+    introTimer++;
+    // Dark cinematic background
+    const iGrad = ctx.createLinearGradient(0,0,0,canvas.height);
+    iGrad.addColorStop(0,'#0d0d1a'); iGrad.addColorStop(1,'#1a0a00');
+    ctx.fillStyle=iGrad; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Slow floating dust motes
+    ctx.fillStyle='rgba(255,215,0,0.18)';
+    for(let i=0;i<12;i++){
+      const mx=100+i*58, my=((introTimer*0.3+i*55)%520)-20;
+      ctx.beginPath(); ctx.arc(mx,my,1.5+i%3,0,Math.PI*2); ctx.fill();
+    }
+
+    // Devi standing centre, slightly larger
+    const savedPlayer2 = {...player};
+    player.x = 368; player.y = 260; player.facing = 1; player.onGround = true; player.vx=0;
+    ctx.save(); ctx.translate(400,300); ctx.scale(1.4,1.4); ctx.translate(-400,-300);
+    drawDevi();
+    ctx.restore();
+    Object.assign(player, savedPlayer2);
+
+    // Spotlight glow behind Devi
+    ctx.save();
+    const spot = ctx.createRadialGradient(400,310,10,400,310,160);
+    spot.addColorStop(0,'rgba(255,200,80,0.13)');
+    spot.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=spot; ctx.fillRect(0,0,800,500);
+    ctx.restore();
+
+    // Typewriter-style text reveal
+    const fullText1 = "You're an overpaid quality manager.";
+    const fullText2 = "You didn't choose this life.";
+    const fullText3 = "It chose you.";
+    const charsPerFrame = 1.5;
+    const t1end = fullText1.length / charsPerFrame;
+    const t2end = t1end + 40 + fullText2.length / charsPerFrame;
+    const t3end = t2end + 40 + fullText3.length / charsPerFrame;
+
+    const show1 = Math.min(fullText1.length, Math.max(0, Math.floor(introTimer * charsPerFrame)));
+    const show2 = Math.min(fullText2.length, Math.max(0, Math.floor((introTimer - t1end - 40) * charsPerFrame)));
+    const show3 = Math.min(fullText3.length, Math.max(0, Math.floor((introTimer - t2end - 40) * charsPerFrame)));
+
+    ctx.textAlign='center';
+    ctx.shadowColor='rgba(0,0,0,0.9)'; ctx.shadowBlur=8;
+
+    if (show1 > 0) {
+      ctx.fillStyle='rgba(220,220,220,'+(Math.min(1,introTimer/20))+')';
+      ctx.font='italic 22px Comic Sans MS, cursive';
+      ctx.fillText(fullText1.slice(0, show1), 400, 128);
+    }
+    if (show2 > 0) {
+      ctx.fillStyle='rgba(220,220,220,1)';
+      ctx.font='italic 22px Comic Sans MS, cursive';
+      ctx.fillText(fullText2.slice(0, show2), 400, 164);
+    }
+    if (show3 > 0) {
+      const s3fade = Math.min(1,(introTimer - t2end - 40)/15);
+      ctx.fillStyle='rgba(255,215,0,'+s3fade+')';
+      ctx.font='bold italic 28px Comic Sans MS, cursive';
+      ctx.fillText(fullText3.slice(0, show3), 400, 208);
+    }
+    ctx.shadowBlur=0;
+
+    // Continue prompt — only after all text has shown
+    if (introTimer > t3end + 30) {
+      const pAlpha = 0.5 + Math.sin(Date.now()/400)*0.5;
+      ctx.fillStyle='rgba(255,255,255,'+pAlpha*0.7+')';
+      ctx.font='14px Comic Sans MS, cursive';
+      ctx.fillText(isTouchDevice ? 'Tap to continue' : 'Press SPACE to continue', 400, 460);
+    }
+  }
+  else if (gameState === STATE.MENU) {
+    // Draw a nice menu BG
+    const grad = ctx.createLinearGradient(0,0,0,canvas.height);
+    grad.addColorStop(0,'#1a1a2e'); grad.addColorStop(1,'#16213e');
+    ctx.fillStyle=grad; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Floating office doodles
+    for(let i=0;i<6;i++){
+      const bx=80+i*130, by=60+Math.sin(Date.now()/1000+i)*15;
+      ctx.globalAlpha=0.15; ctx.fillStyle='#FFD700';
+      ctx.font='30px serif'; ctx.textAlign='center';
+      ctx.fillText(['📋','🧻','💼','⭐','📁','✅'][i], bx, by);
+    }
+    ctx.globalAlpha=1;
+
+    ctx.textAlign='center';
+    ctx.fillStyle='#FFD700'; ctx.font='bold 52px Comic Sans MS, cursive';
+    ctx.shadowColor='#FF8C00'; ctx.shadowBlur=20;
+    ctx.fillText("Quality Quest", 400, 130);
+    ctx.shadowBlur=0;
+
+    ctx.fillStyle='white'; ctx.font='18px Comic Sans MS, cursive';
+    ctx.fillText('Collect reports & toilet paper', 400, 175);
+    ctx.fillText('while dodging RECALLS and BART!', 400, 205);
+
+    // Mini Devi preview
+    const savedPlayer = {...player};
+    player.x = 370; player.y = 230; player.facing = 1; player.onGround = true; player.vx=0;
+    drawDevi();
+    Object.assign(player, savedPlayer);
+
+    ctx.fillStyle='rgba(255,255,255,0.8)'; ctx.font='14px Comic Sans MS, cursive';
+    ctx.fillText('← → Move  |  SPACE Jump', 400, 310);
+
+    const pulse2 = 0.94 + Math.sin(Date.now()/300)*0.06;
+    ctx.save(); ctx.translate(400,370); ctx.scale(pulse2,pulse2);
+    ctx.fillStyle='#FFD700';
+    ctx.beginPath(); ctx.roundRect(-130,-24,260,48,14); ctx.fill();
+    ctx.fillStyle='#1a1a2e'; ctx.font='bold 20px Comic Sans MS, cursive';
+    ctx.fillText(isTouchDevice ? '▶  TAP TO START' : '▶  PRESS SPACE TO START', 0, 8);
+    ctx.restore();
+  }
+  else if (gameState === STATE.PLAYING || gameState === STATE.LEVEL_COMPLETE) {
+    const isBathroomNow = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+    if (isBathroomNow) {
+      drawTopDown();
+      drawParticles();
+      if (gameState === STATE.LEVEL_COMPLETE) {
+        drawOverlay('🚽 You Escaped!', 'Score: '+score+'\nGet ready for The Reckoning!',
+          isTouchDevice?'TAP FOR NEXT LEVEL':'PRESS SPACE FOR NEXT LEVEL');
+      }
+    } else {
+    drawBackground();
+    platforms.forEach(drawPlatform);
+    collectibles.forEach(drawCollectible);
+    enemies.forEach(drawEnemy);
+    if (boss && !boss.dead) drawToiletBoss(boss);
+    if (deliveryBoss) drawDeliveryGuy(deliveryBoss);
+    drawMoneyAndPackages();
+    drawDeliveryHUD();
+    // Explosion poop smears appear right after boss dies
+    if (bossExploding && boss && boss.dead) {
+      for (const s of poopSmears) {
+        if (s.delay > 0) { s.delay = Math.max(0,s.delay-2); continue; }
+        s.opacity = Math.min(0.7, s.opacity + 0.06);
+        ctx.save();
+        ctx.globalAlpha = s.opacity;
+        ctx.translate(s.x, s.y);
+        ctx.rotate(s.rot);
+        ctx.fillStyle='#4E342E';
+        ctx.beginPath();
+        const pts=6;
+        for(let i=0;i<pts;i++){
+          const a=(i/pts)*Math.PI*2;
+          const w=s.r*(0.5+0.5*Math.sin(a*3+s.rot));
+          i===0?ctx.moveTo(Math.cos(a)*w,Math.sin(a)*w):ctx.lineTo(Math.cos(a)*w,Math.sin(a)*w);
+        }
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+    }
+    drawBombs();
+    drawDevi();
+    drawBossHUD();
+    drawParticles();
+    drawHUD();
+
+    if (gameState === STATE.LEVEL_COMPLETE) {
+      const nextLv = currentLevel + 1;
+      const isLast = nextLv >= LEVELS.length;
+      const wasBathroom = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+      const titleText = isLast ? '🏆 All Done!' : wasBathroom ? '🚽 You Escaped!' : '✅ Level Complete!';
+      const bodyText = `Score: ${score}\n${isLast ? 'You survived another day!' : 'Get ready for ' + LEVELS[nextLv].name + '!'}`;
+      const btnText = isLast ? (isTouchDevice ? 'TAP FOR VICTORY' : 'PRESS SPACE FOR VICTORY') : (isTouchDevice ? 'TAP FOR NEXT LEVEL' : 'PRESS SPACE FOR NEXT LEVEL');
+      drawOverlay(titleText, bodyText, btnText);
+    }
+  }
+  } // end !bathroom
+  else if (gameState === STATE.GAME_OVER) {
+    drawBackground();
+    platforms.forEach(drawPlatform);
+    drawParticles();
+    drawOverlay('💀 RESTRUCTURED!', `Bart got you...\nFinal Score: ${score}`, 'PRESS SPACE TO TRY AGAIN', 'rgba(80,0,0,0.75)');
+  }
+  else if (gameState === STATE.LIVING_ROOM) {
+    cinematicTimer++;
+    // Living room background
+    const bgG = ctx.createLinearGradient(0,0,0,canvas.height);
+    bgG.addColorStop(0,'#f5e6d3'); bgG.addColorStop(1,'#e8d5b0');
+    ctx.fillStyle=bgG; ctx.fillRect(0,0,800,500);
+
+    // Floor
+    ctx.fillStyle='#c8a96e';
+    ctx.fillRect(0,420,800,80);
+    // Floor wood planks
+    ctx.strokeStyle='#b8975a'; ctx.lineWidth=1;
+    for(let fx=0;fx<800;fx+=80){ctx.beginPath();ctx.moveTo(fx,420);ctx.lineTo(fx,500);ctx.stroke();}
+
+    // Wall picture
+    ctx.fillStyle='#8B7355'; ctx.fillRect(560,60,120,90);
+    ctx.fillStyle='#a0c4ff'; ctx.fillRect(568,68,104,74);
+    // Sunset in picture
+    const sunG=ctx.createLinearGradient(568,68,568,142);
+    sunG.addColorStop(0,'#ff9a56'); sunG.addColorStop(1,'#a0c4ff');
+    ctx.fillStyle=sunG; ctx.fillRect(568,68,104,74);
+    ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(620,95,18,0,Math.PI*2); ctx.fill();
+
+    // Window on left
+    ctx.fillStyle='#8B7355'; ctx.fillRect(60,50,140,150);
+    ctx.fillStyle='#87CEEB'; ctx.fillRect(68,58,124,134);
+    // Window cross
+    ctx.strokeStyle='#8B7355'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(130,58); ctx.lineTo(130,192); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(68,125); ctx.lineTo(192,125); ctx.stroke();
+    // Night sky in window
+    ctx.fillStyle='#1a1a4e'; ctx.fillRect(68,58,124,134);
+    for(let s=0;s<12;s++){
+      const sx=75+s*10+(s%3)*5, sy=70+s*7;
+      ctx.fillStyle='white'; ctx.beginPath(); ctx.arc(sx,sy,1.2,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle='#FFE066'; ctx.beginPath(); ctx.arc(120,85,12,0,Math.PI*2); ctx.fill();
+
+    // TV on stand
+    ctx.fillStyle='#222'; ctx.beginPath(); ctx.roundRect(550,200,180,120,8); ctx.fill();
+    ctx.fillStyle='#1a1a2e'; ctx.beginPath(); ctx.roundRect(558,208,164,100,4); ctx.fill();
+    ctx.fillStyle='#222'; ctx.fillRect(620,320,40,20); ctx.fillRect(600,338,80,8);
+    // TV screen - showing something
+    const tvFlicker = Math.sin(Date.now()/200)*0.1;
+    ctx.fillStyle=`rgba(100,150,255,${0.3+tvFlicker})`;
+    ctx.beginPath(); ctx.roundRect(558,208,164,100,4); ctx.fill();
+    ctx.fillStyle='white'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('QUALITY NEWS', 640, 255);
+    ctx.fillStyle='#ffff00'; ctx.font='9px sans-serif';
+    ctx.fillText('BREAKING: Man survives office', 640, 272);
+
+    // Couch - big comfy couch
+    ctx.fillStyle='#8B4513'; ctx.beginPath(); ctx.roundRect(220,320,360,110,15); ctx.fill();
+    ctx.fillStyle='#A0522D'; ctx.beginPath(); ctx.roundRect(225,325,350,80,12); ctx.fill();
+    // Cushions
+    ctx.fillStyle='#c0804a';
+    ctx.beginPath(); ctx.roundRect(232,330,160,65,10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(408,330,160,65,10); ctx.fill();
+    // Cushion seams
+    ctx.strokeStyle='#8B4513'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(312,330); ctx.lineTo(312,395); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(488,330); ctx.lineTo(488,395); ctx.stroke();
+    // Armrests
+    ctx.fillStyle='#8B4513';
+    ctx.beginPath(); ctx.roundRect(210,310,30,120,10); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(560,310,30,120,10); ctx.fill();
+
+    // Pillows on couch
+    ctx.fillStyle='#e8c49a'; ctx.beginPath(); ctx.ellipse(310,335,35,22,0.2,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#c8a070'; ctx.lineWidth=1.5; ctx.stroke();
+
+    // Coffee table
+    ctx.fillStyle='#6B4226'; ctx.beginPath(); ctx.roundRect(280,400,240,22,4); ctx.fill();
+    ctx.fillStyle='#7B5236'; ctx.fillRect(295,420,18,18); ctx.fillRect(447,420,18,18);
+    // Coffee mug on table
+    ctx.fillStyle='white'; ctx.beginPath(); ctx.ellipse(400,404,14,10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#4a2000'; ctx.beginPath(); ctx.ellipse(400,403,10,7,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='white'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(416,406,8,0.3,Math.PI); ctx.stroke();
+
+    // Lamp
+    ctx.fillStyle='#c8a06e'; ctx.fillRect(162,250,8,160);
+    ctx.fillStyle='#ffe8b0'; ctx.beginPath(); ctx.moveTo(130,250); ctx.lineTo(202,250); ctx.lineTo(190,180); ctx.lineTo(142,180); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='#c8a06e'; ctx.lineWidth=2; ctx.stroke();
+    // Lamp glow
+    const lampGlow=ctx.createRadialGradient(166,260,5,166,260,80);
+    lampGlow.addColorStop(0,'rgba(255,230,150,0.25)'); lampGlow.addColorStop(1,'rgba(255,230,150,0)');
+    ctx.fillStyle=lampGlow; ctx.fillRect(86,200,160,120);
+
+    // Devi walks in from left, then sits
+    const deviWalkEnd = 200;
+    const deviSitX = 340, deviSitY = 290;
+    let deviX, deviY, deviSitting=false;
+    if (cinematicTimer < deviWalkEnd) {
+      const t = cinematicTimer / deviWalkEnd;
+      deviX = -20 + t * (deviSitX + 20);
+      deviY = 396;
+      player.vx = 2;
+    } else {
+      deviX = deviSitX;
+      deviY = deviSitY + Math.min(cinematicTimer - deviWalkEnd, 30);
+      deviSitting = cinematicTimer > deviWalkEnd + 20;
+      player.vx = 0;
+    }
+    player.x = deviX; player.y = deviY;
+    player.onGround = true; player.facing = 1;
+    player.frame = cinematicTimer < deviWalkEnd ? Math.floor(cinematicTimer/8)%4 : 0;
+    drawDevi();
+
+    // Sitting caption
+    if (cinematicTimer > deviWalkEnd + 30) {
+      const sigh = Math.min(1,(cinematicTimer-deviWalkEnd-30)/20);
+      ctx.fillStyle=`rgba(80,40,10,${sigh})`;
+      ctx.font='italic 18px Comic Sans MS, cursive'; ctx.textAlign='center';
+      ctx.fillText('Finally... peace and quiet.', 400, 160);
+    }
+
+    // DING DONG doorbell animation
+    if (cinematicTimer === 311) sfxDoorbell();
+    if (cinematicTimer > 310) {
+      const dbAlpha = Math.min(1,(cinematicTimer-310)/15);
+      ctx.save();
+      ctx.globalAlpha=dbAlpha;
+      // Door on right
+      ctx.fillStyle='#5D3A1A'; ctx.beginPath(); ctx.roundRect(690,180,90,240,6); ctx.fill();
+      ctx.fillStyle='#7B4F25'; ctx.fillRect(698,188,34,100); ctx.fillRect(698,298,34,100);
+      ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(693,300,7,0,Math.PI*2); ctx.fill();
+      // Knock marks
+      const knock=Math.sin(Date.now()/80)*3;
+      ctx.strokeStyle='rgba(255,215,0,0.8)'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.arc(720+knock,260,20,0,Math.PI*2); ctx.stroke();
+      ctx.restore();
+      // DING DONG text
+      const ddPulse=0.7+Math.sin(Date.now()/100)*0.3;
+      ctx.fillStyle=`rgba(255,100,50,${ddPulse})`;
+      ctx.font='bold 36px Comic Sans MS, cursive'; ctx.textAlign='center';
+      ctx.shadowColor='#FF4400'; ctx.shadowBlur=15;
+      ctx.fillText('🔔 DING DONG!', 400, 80);
+      ctx.shadowBlur=0;
+    }
+
+    // Continue prompt
+    if (cinematicTimer > 350) {
+      const pA=0.5+Math.sin(Date.now()/400)*0.5;
+      ctx.fillStyle=`rgba(80,40,10,${pA*0.8})`;
+      ctx.font='14px Comic Sans MS, cursive'; ctx.textAlign='center';
+      ctx.fillText(isTouchDevice?'Tap to answer the door':'Press SPACE to answer the door', 400, 480);
+    }
+    // Auto-advance after 500 frames
+    if (cinematicTimer === 500) { cinematicTimer = 0; gameState = STATE.DELIVERY_CUTSCENE; }
+  }
+
+  else if (gameState === STATE.DELIVERY_CUTSCENE) {
+    cinematicTimer++;
+    // Dark dramatic background
+    const dcG=ctx.createLinearGradient(0,0,0,canvas.height);
+    dcG.addColorStop(0,'#0d0008'); dcG.addColorStop(1,'#1a0000');
+    ctx.fillStyle=dcG; ctx.fillRect(0,0,800,500);
+
+    // Dramatic rain lines
+    ctx.strokeStyle='rgba(100,100,255,0.15)'; ctx.lineWidth=1;
+    for(let r=0;r<30;r++){
+      const rx=(r*113+cinematicTimer*3)%820-10;
+      const ry=(r*97+cinematicTimer*5)%520-10;
+      ctx.beginPath(); ctx.moveTo(rx,ry); ctx.lineTo(rx-8,ry+25); ctx.stroke();
+    }
+
+    // Lightning flash occasionally
+    if (Math.floor(cinematicTimer/40)%5===0 && cinematicTimer%40<4) {
+      ctx.fillStyle='rgba(200,200,255,0.12)'; ctx.fillRect(0,0,800,500);
+    }
+
+    // Ground shadow
+    ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(0,430,800,70);
+
+    // Devi at door (left) - surprised face
+    player.x=60; player.y=370; player.facing=1; player.onGround=true;
+    drawDevi();
+
+    // Delivery guy slides in from right — drawn standalone, no deliveryBoss needed
+    const slideIn = Math.min(1, (cinematicTimer-20)/80);
+    const dgX = 800 - slideIn * 320;
+
+    if (cinematicTimer > 20) {
+      // Draw a full standalone delivery guy for the cutscene
+      const cutDB = {
+        x: dgX - 50, y: 250, w: 100, h: 130,
+        dir: -1, shakeX: 0, hitFlash: 0, dead: false,
+        phase: 1,
+        taunt: null, tauntTimer: 0,
+      };
+      drawDeliveryGuy(cutDB);
+    }
+
+    // Speech lines appear typewriter style
+    const lines = [
+      {t:60,  txt:"I LOST MY JOB BECAUSE OF YOU.", col:'#FF4444', size:20},
+      {t:120, txt:"I'VE BEEN TRAINING FOR THIS BATTLE", col:'#FF6B35', size:18},
+      {t:160, txt:"EVER SINCE.", col:'#FF6B35', size:18},
+      {t:210, txt:"...PREPARE YOURSELF.", col:'#FFD700', size:22},
+    ];
+    ctx.textAlign='center';
+    for (const ln of lines) {
+      if (cinematicTimer > ln.t) {
+        const a=Math.min(1,(cinematicTimer-ln.t)/15);
+        ctx.globalAlpha=a;
+        ctx.fillStyle=ln.col;
+        ctx.font=`bold ${ln.size}px Comic Sans MS, cursive`;
+        ctx.shadowColor='black'; ctx.shadowBlur=8;
+        ctx.fillText(ln.txt, 400, 90+(lines.indexOf(ln)*32));
+        ctx.shadowBlur=0;
+      }
+    }
+    ctx.globalAlpha=1;
+
+    // Vs graphic
+    if (cinematicTimer > 180) {
+      const vsAlpha=Math.min(1,(cinematicTimer-180)/20);
+      ctx.globalAlpha=vsAlpha;
+      const vsScale=0.8+Math.sin(Date.now()/150)*0.06;
+      ctx.save(); ctx.translate(400,280); ctx.scale(vsScale,vsScale);
+      ctx.fillStyle='#FF6B35';
+      ctx.font='bold 72px Comic Sans MS, cursive';
+      ctx.textAlign='center';
+      ctx.shadowColor='#FF0000'; ctx.shadowBlur=20;
+      ctx.fillText('VS', 0, 26);
+      ctx.shadowBlur=0;
+      ctx.restore();
+      ctx.globalAlpha=1;
+    }
+
+    if (cinematicTimer > 240) {
+      const pA=0.5+Math.sin(Date.now()/300)*0.5;
+      ctx.fillStyle=`rgba(255,150,50,${pA})`;
+      ctx.font='bold 15px Comic Santos MS, cursive'; ctx.textAlign='center';
+      ctx.fillText(isTouchDevice?'TAP TO FIGHT!':'PRESS SPACE TO FIGHT!', 400, 470);
+    }
+    // Auto-advance after 380 frames
+    if (cinematicTimer === 380) { startDeliveryBoss(); }
+  }
+
+  else if (gameState === STATE.WIN) {
+    // Brown poop-smeared background
+    const bgGrad = ctx.createLinearGradient(0,0,0,canvas.height);
+    bgGrad.addColorStop(0,'#3e2000'); bgGrad.addColorStop(1,'#1a0d00');
+    ctx.fillStyle=bgGrad; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+    // Draw poop smears
+    for (const s of poopSmears) {
+      if (s.delay > 0) { s.delay--; continue; }
+      s.opacity = Math.min(1, s.opacity + 0.04);
+      ctx.save();
+      ctx.globalAlpha = s.opacity * 0.92;
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.rot);
+      // Main splat blob
+      const g = ctx.createRadialGradient(0,0,2,0,0,s.r);
+      g.addColorStop(0,'#5D4037'); g.addColorStop(0.6,'#4E342E'); g.addColorStop(1,'rgba(30,15,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      // Irregular blob using bezier curves
+      const pts = 7;
+      for (let i=0;i<pts;i++) {
+        const a = (i/pts)*Math.PI*2;
+        const wobble = s.r * (0.6 + 0.4 * Math.sin(a*3 + s.rot*2));
+        const nx = Math.cos(a)*wobble, ny = Math.sin(a)*wobble;
+        i===0 ? ctx.moveTo(nx,ny) : ctx.lineTo(nx,ny);
+      }
+      ctx.closePath(); ctx.fill();
+      // Drips
+      ctx.fillStyle='#3E2723';
+      for (let d=0;d<s.drips;d++) {
+        const da = s.rot + d * 0.8;
+        const dx = Math.cos(da)*s.r*0.7, dy = Math.sin(da)*s.r*0.7;
+        ctx.beginPath();
+        ctx.ellipse(dx, dy + s.r*0.3, 4, 8+d*3, da, 0, Math.PI*2);
+        ctx.fill();
+      }
+      // Shine highlight
+      ctx.fillStyle='rgba(255,200,100,0.12)';
+      ctx.beginPath(); ctx.ellipse(-s.r*0.2,-s.r*0.2, s.r*0.25, s.r*0.15, -0.5, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+    }
+
+    // Poop emoji rain
+    ctx.font='28px serif'; ctx.textAlign='center';
+    for(let i=0;i<10;i++){
+      const px=50+i*78, py=30+((Date.now()/1.5+i*120)%460);
+      ctx.globalAlpha=0.6;
+      ctx.fillText('💩', px, py);
+    }
+    ctx.globalAlpha=1;
+
+    drawOverlay('💩 TOILET DESTROYED!', `Quality department saved!\nFinal Score: ${score}`, 'PRESS SPACE TO PLAY AGAIN', 'rgba(20,8,0,0.82)');
+  }
+
+  else if (gameState === STATE.ENDING) {
+    endingTimer++;
+    const t = endingTimer;
+
+    // Evening sky gradient
+    const skyG=ctx.createLinearGradient(0,0,0,canvas.height);
+    skyG.addColorStop(0,'#1a1a4e');
+    skyG.addColorStop(0.5,'#f97316');
+    skyG.addColorStop(1,'#fde68a');
+    ctx.fillStyle=skyG; ctx.fillRect(0,0,800,500);
+
+    // Stars fading in
+    ctx.fillStyle='white';
+    for(let s=0;s<20;s++){
+      const sx=50+s*37, sy=20+s*9;
+      ctx.globalAlpha=Math.min(1,t/60)*0.8;
+      ctx.beginPath(); ctx.arc(sx%780,sy%120,1.3,0,Math.PI*2); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+
+    // Moon
+    ctx.fillStyle='#FFF9C4';
+    ctx.beginPath(); ctx.arc(700,60,30,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#f97316'; ctx.beginPath(); ctx.arc(718,52,26,0,Math.PI*2); ctx.fill();
+
+    // Ground / lawn
+    const grassG=ctx.createLinearGradient(0,380,0,500);
+    grassG.addColorStop(0,'#166534'); grassG.addColorStop(1,'#14532d');
+    ctx.fillStyle=grassG; ctx.fillRect(0,380,800,120);
+    // Grass tufts
+    ctx.strokeStyle='#15803d'; ctx.lineWidth=2;
+    for(let g=0;g<30;g++){
+      const gx=10+g*27;
+      ctx.beginPath(); ctx.moveTo(gx,380); ctx.lineTo(gx-3,372); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gx+4,380); ctx.lineTo(gx+7,371); ctx.stroke();
+    }
+
+    // Pathway
+    ctx.fillStyle='#d4a76a';
+    ctx.beginPath(); ctx.moveTo(280,500); ctx.lineTo(420,500); ctx.lineTo(460,380); ctx.lineTo(240,380); ctx.fill();
+    // Path stones
+    ctx.strokeStyle='#c8975a'; ctx.lineWidth=1;
+    for(let ps=0;ps<6;ps++) ctx.strokeRect(265+ps*5, 400+ps*14, 30+ps*4, 14);
+
+    // In-laws house - warm cosy home
+    ctx.fillStyle='#9b2c2c'; // red brick
+    ctx.beginPath(); ctx.roundRect(100,120,400,270,6); ctx.fill();
+    // Brick pattern
+    ctx.strokeStyle='rgba(0,0,0,0.12)'; ctx.lineWidth=1;
+    for(let br=0;br<14;br++) ctx.strokeRect(100,120+br*19,400,19);
+    for(let bc=0;bc<6;bc++) {
+      for(let br=0;br<14;br++) {
+        const offset = br%2===0 ? 0 : 33;
+        ctx.strokeRect(100+offset+bc*66,120+br*19,66,19);
+      }
+    }
+    // Roof
+    ctx.fillStyle='#374151';
+    ctx.beginPath(); ctx.moveTo(80,120); ctx.lineTo(300,30); ctx.lineTo(520,120); ctx.closePath(); ctx.fill();
+    // Roof shingles
+    ctx.strokeStyle='#1f2937'; ctx.lineWidth=1;
+    for(let sh=0;sh<8;sh++){
+      const sy2=50+sh*10;
+      const xl=80+(sy2-30)/0.9*0.5, xr=520-(sy2-30)/0.9*0.5;
+      ctx.beginPath(); ctx.moveTo(xl,sy2); ctx.lineTo(xr,sy2); ctx.stroke();
+    }
+    // Chimney
+    ctx.fillStyle='#7f1d1d'; ctx.fillRect(370,30,45,60);
+    ctx.fillStyle='#374151'; ctx.fillRect(365,28,55,14);
+    // Smoke puffs
+    for(let sm=0;sm<3;sm++){
+      const smY=20-sm*18+Math.sin(t/30+sm)*5;
+      ctx.fillStyle=`rgba(200,200,200,${0.6-sm*0.15})`;
+      ctx.beginPath(); ctx.arc(392+sm*5,smY,10+sm*4,0,Math.PI*2); ctx.fill();
+    }
+    // Front door
+    ctx.fillStyle='#92400e'; ctx.beginPath(); ctx.roundRect(258,280,84,110,6); ctx.fill();
+    ctx.fillStyle='#78350f'; ctx.beginPath(); ctx.roundRect(264,286,72,98,4); ctx.fill();
+    ctx.fillStyle='#FFD700'; ctx.beginPath(); ctx.arc(336,335,5,0,Math.PI*2); ctx.fill();
+    // Door wreath
+    ctx.strokeStyle='#166534'; ctx.lineWidth=6;
+    ctx.beginPath(); ctx.arc(300,305,14,0,Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#FF4444'; ctx.beginPath(); ctx.arc(300,292,4,0,Math.PI*2); ctx.fill();
+    // Windows with warm glow
+    const winGlow=ctx.createRadialGradient(155,220,2,155,220,45);
+    winGlow.addColorStop(0,'rgba(255,230,100,0.5)'); winGlow.addColorStop(1,'rgba(255,200,50,0)');
+    ctx.fillStyle=winGlow; ctx.fillRect(115,185,80,80);
+    ctx.fillStyle='#fef3c7'; ctx.fillRect(120,190,70,70);
+    ctx.strokeStyle='#92400e'; ctx.lineWidth=4;
+    ctx.strokeRect(120,190,70,70);
+    ctx.beginPath(); ctx.moveTo(155,190); ctx.lineTo(155,260); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(120,225); ctx.lineTo(190,225); ctx.stroke();
+    // Curtains in window
+    ctx.fillStyle='rgba(220,80,80,0.6)';
+    ctx.beginPath(); ctx.moveTo(120,190); ctx.quadraticCurveTo(130,225,120,260); ctx.lineTo(140,260); ctx.lineTo(140,190); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(190,190); ctx.quadraticCurveTo(180,225,190,260); ctx.lineTo(170,260); ctx.lineTo(170,190); ctx.fill();
+    // Right window
+    const winGlow2=ctx.createRadialGradient(420,220,2,420,220,45);
+    winGlow2.addColorStop(0,'rgba(255,230,100,0.5)'); winGlow2.addColorStop(1,'rgba(255,200,50,0)');
+    ctx.fillStyle=winGlow2; ctx.fillRect(385,185,80,80);
+    ctx.fillStyle='#fef3c7'; ctx.fillRect(390,190,70,70);
+    ctx.strokeStyle='#92400e'; ctx.lineWidth=4; ctx.strokeRect(390,190,70,70);
+    ctx.beginPath(); ctx.moveTo(425,190); ctx.lineTo(425,260); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(390,225); ctx.lineTo(460,225); ctx.stroke();
+    ctx.fillStyle='rgba(80,80,220,0.6)';
+    ctx.beginPath(); ctx.moveTo(390,190); ctx.quadraticCurveTo(400,225,390,260); ctx.lineTo(410,260); ctx.lineTo(410,190); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(460,190); ctx.quadraticCurveTo(450,225,460,260); ctx.lineTo(440,260); ctx.lineTo(440,190); ctx.fill();
+
+    // In-laws silhouette in window - waving
+    const waveArm = Math.sin(t/15)*20;
+    ctx.fillStyle='rgba(100,40,10,0.7)';
+    // Grandma
+    ctx.beginPath(); ctx.ellipse(420,210,8,9,0,0,Math.PI*2); ctx.fill();
+    ctx.fillRect(416,218,8,20);
+    ctx.save(); ctx.translate(424,220); ctx.rotate(waveArm*Math.PI/180);
+    ctx.fillRect(0,-2,14,5); ctx.restore();
+    // Grandpa
+    ctx.beginPath(); ctx.ellipse(445,208,9,10,0,0,Math.PI*2); ctx.fill();
+    ctx.fillRect(440,218,10,22);
+
+    // SCENE: Devi walks in with two kids then walks away to car
+    const phase1End = 120;  // walk up with kids
+    const phase2End = 220;  // hand off at door, kids go in
+    const phase3End = 320;  // Devi walks to car
+    const phase4End = 420;  // drives off
+
+    // Two kids drawn as small Devis
+    function drawKid(kx, ky, frame2, col) {
+      ctx.save();
+      ctx.translate(kx, ky);
+      ctx.scale(0.55, 0.55);
+      // legs
+      ctx.fillStyle='#1a1a2e';
+      ctx.fillRect(-6,16,5,12); ctx.fillRect(2,16,5,12);
+      // body
+      ctx.fillStyle=col||'#e74c3c';
+      ctx.beginPath(); ctx.roundRect(-9,2,18,18,4); ctx.fill();
+      // head
+      ctx.fillStyle='#FDBCB4';
+      ctx.beginPath(); ctx.ellipse(0,-10,10,11,0,0,Math.PI*2); ctx.fill();
+      // hair
+      ctx.fillStyle='#1a1a1a';
+      ctx.beginPath(); ctx.ellipse(0,-19,10,5,0,Math.PI,Math.PI*2); ctx.fill();
+      // face
+      ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(-3,-11,2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(3,-11,2,0,Math.PI*2); ctx.fill();
+      // smile
+      ctx.strokeStyle='#c0a070'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(0,-7,3,0.1,Math.PI-0.1); ctx.stroke();
+      ctx.restore();
+    }
+
+    let deviEndX, kid1X, kid2X, kid1Y, kid2Y;
+    const carX = t > phase3End ? 600 + (t-phase3End)*3 : 600;
+
+    if (t < phase1End) {
+      const prog = t/phase1End;
+      deviEndX = -30 + prog*340;
+      kid1X = deviEndX - 30; kid1Y = 375 + Math.sin(t*0.4)*4;
+      kid2X = deviEndX - 55; kid2Y = 375 + Math.sin(t*0.4+1)*4;
+    } else if (t < phase2End) {
+      deviEndX = 310;
+      kid1X = 280 + (t-phase1End)*0.8; kid1Y = 370;
+      kid2X = 255 + (t-phase1End)*0.9; kid2Y = 370;
+    } else if (t < phase3End) {
+      deviEndX = 310 + (t-phase2End)*1.5;
+      kid1X = 380; kid1Y = 360;
+      kid2X = 355; kid2Y = 360;
+    } else {
+      deviEndX = 500 + (t-phase3End)*2.5;
+      kid1X = 390; kid1Y = 358;
+      kid2X = 365; kid2Y = 358;
+    }
+
+    // Draw kids (behind Devi or at door)
+    if (t < phase2End + 30) {
+      drawKid(kid1X, kid1Y, t, '#e74c3c');
+      drawKid(kid2X, kid2Y, t, '#3498db');
+    } else {
+      // Kids inside waving
+      ctx.globalAlpha = Math.min(1,(t-phase2End)/20)*0.8;
+      drawKid(160, 215, t, '#e74c3c');
+      drawKid(183, 215, t, '#3498db');
+      ctx.globalAlpha = 1;
+    }
+
+    // Devi walking
+    if (deviEndX < 820) {
+      player.x = deviEndX; player.y = 360;
+      player.facing = t > phase2End ? 1 : 1;
+      player.onGround = true;
+      player.vx = t < phase1End || t > phase2End ? 1 : 0;
+      player.frame = (t > phase1End && t < phase2End) ? 0 : Math.floor(t/8)%4;
+      drawDevi();
+    }
+
+    // Car (simple cartoon car going right)
+    if (t > phase3End - 20) {
+      const cx2 = Math.min(carX, 840);
+      ctx.save(); ctx.translate(cx2, 395);
+      // Car body
+      ctx.fillStyle='#3498db';
+      ctx.beginPath(); ctx.roundRect(-55,-30,110,40,8); ctx.fill();
+      // Roof
+      ctx.fillStyle='#2980b9';
+      ctx.beginPath(); ctx.roundRect(-35,-52,70,24,12); ctx.fill();
+      // Windows
+      ctx.fillStyle='rgba(200,230,255,0.7)';
+      ctx.beginPath(); ctx.roundRect(-30,-50,28,20,4); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(4,-50,28,20,4); ctx.fill();
+      // Wheels
+      ctx.fillStyle='#222'; ctx.beginPath(); ctx.arc(-32,12,14,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(32,12,14,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#888'; ctx.beginPath(); ctx.arc(-32,12,7,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(32,12,7,0,Math.PI*2); ctx.fill();
+      // Headlights
+      const hlGlow=ctx.createRadialGradient(60,-5,2,80,-5,30);
+      hlGlow.addColorStop(0,'rgba(255,255,200,0.8)'); hlGlow.addColorStop(1,'rgba(255,255,200,0)');
+      ctx.fillStyle=hlGlow; ctx.fillRect(40,-30,50,50);
+      ctx.fillStyle='#fffde7'; ctx.beginPath(); ctx.ellipse(55,-5,6,5,0,0,Math.PI*2); ctx.fill();
+      // Exhaust puff
+      if (t > phase4End - 20) {
+        for(let ep=0;ep<3;ep++){
+          ctx.fillStyle=`rgba(150,150,150,${0.4-ep*0.1})`;
+          ctx.beginPath(); ctx.arc(-62-ep*12,-5+ep*3,6+ep*4,0,Math.PI*2); ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // ── CAPTION HELPER ────────────────────────────────────────────────────────
+    function showCaption(text, y, start, end, big, col) {
+      if (t < start || t > end) return;
+      const fi=Math.min(1,(t-start)/18), fo=t>end-22?Math.max(0,(end-t)/22):1;
+      ctx.globalAlpha=fi*fo;
+      ctx.fillStyle=col||(big?'#FFD700':'rgba(255,255,255,0.92)');
+      ctx.font=big?'bold 46px Comic Sans MS, cursive':'italic 20px Comic Sans MS, cursive';
+      ctx.textAlign='center';
+      if(big){ctx.shadowColor='#FF8C00';ctx.shadowBlur=18;}
+      ctx.fillText(text,400,y);
+      ctx.shadowBlur=0; ctx.globalAlpha=1;
+    }
+
+    // ── SCENE 1: drop kids (frames 0-420 — existing) ──────────────────────
+    showCaption("Drop the kids at the Mother-in-law's...", 470, 80,  180);
+    showCaption("Quick, wave goodbye...",                  470, 200, 290);
+    showCaption("...time to go home.",                      470, 300, 390);
+
+    // ── SCENE 2: Devi arrives home + KFC feast (frames 440-760) ───────────
+    if (t >= 440 && t < 760) {
+      const sc2 = t - 440; // local timer 0-319
+
+      // Fade in living room BG
+      const sc2fade = Math.min(1, sc2/30);
+      ctx.globalAlpha = sc2fade;
+
+      // Living room background (reuse design from cinematic)
+      const lrG=ctx.createLinearGradient(0,0,0,500);
+      lrG.addColorStop(0,'#f5e6d3'); lrG.addColorStop(1,'#e8c898');
+      ctx.fillStyle=lrG; ctx.fillRect(0,0,800,500);
+
+      // Floor
+      ctx.fillStyle='#c8a96e'; ctx.fillRect(0,420,800,80);
+      ctx.strokeStyle='#b8975a'; ctx.lineWidth=1;
+      for(let fx=0;fx<800;fx+=80){ctx.beginPath();ctx.moveTo(fx,420);ctx.lineTo(fx,500);ctx.stroke();}
+
+      // Lamp
+      ctx.fillStyle='#c8a06e'; ctx.fillRect(92,250,8,160);
+      ctx.fillStyle='#ffe8b0';
+      ctx.beginPath(); ctx.moveTo(66,250); ctx.lineTo(130,250); ctx.lineTo(118,184); ctx.lineTo(78,184); ctx.closePath(); ctx.fill();
+      const lg2=ctx.createRadialGradient(96,255,4,96,255,70);
+      lg2.addColorStop(0,'rgba(255,230,150,0.3)'); lg2.addColorStop(1,'rgba(255,230,150,0)');
+      ctx.fillStyle=lg2; ctx.fillRect(30,200,130,110);
+
+      // Couch
+      ctx.fillStyle='#8B4513';
+      ctx.beginPath(); ctx.roundRect(160,320,480,120,15); ctx.fill();
+      ctx.fillStyle='#A0522D';
+      ctx.beginPath(); ctx.roundRect(165,325,470,85,12); ctx.fill();
+      ctx.fillStyle='#c0804a';
+      ctx.beginPath(); ctx.roundRect(172,330,218,72,10); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(410,330,218,72,10); ctx.fill();
+      ctx.fillStyle='#8B4513';
+      ctx.beginPath(); ctx.roundRect(150,310,35,130,10); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(615,310,35,130,10); ctx.fill();
+
+      // Coffee table
+      ctx.fillStyle='#6B4226';
+      ctx.beginPath(); ctx.roundRect(240,405,320,24,4); ctx.fill();
+      ctx.fillStyle='#7B5236'; ctx.fillRect(255,427,20,20); ctx.fillRect(450,427,20,20);
+
+      // TV on right
+      ctx.fillStyle='#222';
+      ctx.beginPath(); ctx.roundRect(560,195,180,125,8); ctx.fill();
+      ctx.fillStyle='#1a1a2e';
+      ctx.beginPath(); ctx.roundRect(568,203,164,105,4); ctx.fill();
+      const tvf=Math.sin(Date.now()/200)*0.08;
+      ctx.fillStyle=`rgba(80,120,220,${0.25+tvf})`;
+      ctx.beginPath(); ctx.roundRect(568,203,164,105,4); ctx.fill();
+      ctx.fillStyle='white'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+      ctx.fillText('🍗 FOOD NETWORK', 650, 252);
+      ctx.fillStyle='#222'; ctx.fillRect(625,320,40,18); ctx.fillRect(605,336,80,8);
+
+      // KFC bucket on coffee table
+      const kfcBob = Math.sin(sc2*0.08)*2;
+      ctx.save(); ctx.translate(370, 400+kfcBob);
+      // Bucket
+      ctx.fillStyle='#CC0000';
+      ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(-28,-40); ctx.lineTo(28,-40); ctx.lineTo(22,0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='#AA0000';
+      ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(-28,-40); ctx.lineTo(-18,-40); ctx.lineTo(-12,0); ctx.closePath(); ctx.fill();
+      // Lid
+      ctx.fillStyle='#DD0000';
+      ctx.beginPath(); ctx.ellipse(0,-40,28,8,0,0,Math.PI*2); ctx.fill();
+      ctx.strokeStyle='#AA0000'; ctx.lineWidth=1.5; ctx.stroke();
+      // KFC logo on bucket
+      ctx.fillStyle='white'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center';
+      ctx.fillText('KFC',0,-22);
+      // Chicken drumsticks sticking out
+      for(let dc=0;dc<3;dc++){
+        const da=-0.4+dc*0.4;
+        ctx.save(); ctx.rotate(da);
+        ctx.fillStyle='#D4822A';
+        ctx.beginPath(); ctx.ellipse(0,-48,5,18,da,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#F4A235';
+        ctx.beginPath(); ctx.ellipse(0,-62,8,8,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#D4822A'; ctx.lineWidth=1; ctx.stroke();
+        ctx.restore();
+      }
+      ctx.restore();
+
+      // Scattered chicken bones (appear as sc2 progresses)
+      const bonesVisible = Math.floor(sc2/30);
+      for(let b2=0;b2<Math.min(bonesVisible,6);b2++){
+        const bx2=220+b2*50+Math.sin(b2*2.3)*15, by2=410+Math.cos(b2*1.7)*8;
+        ctx.save(); ctx.translate(bx2,by2); ctx.rotate(b2*0.6-0.3);
+        ctx.fillStyle='#EEE8D5';
+        ctx.beginPath(); ctx.ellipse(0,0,12,5,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#CCC4A0'; ctx.lineWidth=1; ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(-14,0,5,5,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(14,0,5,5,0,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+
+      // Devi sitting on couch eating — must reset alpha first!
+      ctx.globalAlpha = 1;
+      const deviSitX = 340, deviSitY = 288;
+      player.x=deviSitX; player.y=deviSitY; player.onGround=true; player.vx=0;
+      player.facing=1; player.frame=0;
+      drawDevi();
+
+      // Chicken leg in hand — drawn on top of Devi
+      if (sc2 > 10) {
+        ctx.save(); ctx.translate(deviSitX+50, deviSitY+12);
+        ctx.rotate(-0.4 + Math.sin(sc2*0.1)*0.15);
+        ctx.fillStyle='#D4822A';
+        ctx.beginPath(); ctx.ellipse(0,0,4,14,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#F4A235';
+        ctx.beginPath(); ctx.ellipse(0,-16,7,7,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#D4822A'; ctx.lineWidth=1; ctx.stroke();
+        // Bite marks
+        ctx.fillStyle='#E8A882';
+        ctx.beginPath(); ctx.ellipse(3,-14,3,2,0.5,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+
+      // Grease splatter effects
+      if (sc2 > 60) {
+        ctx.fillStyle='rgba(210,160,60,0.3)';
+        for(let gr=0;gr<5;gr++){
+          ctx.beginPath(); ctx.arc(300+gr*18, 400+gr*3, 4+gr*2, 0, Math.PI*2); ctx.fill();
+        }
+      }
+
+      ctx.globalAlpha=1;
+      showCaption("Finally home... 🍗", 460, 460, 550);
+      showCaption("Just you. Just chicken. Just peace.", 460, 560, 650);
+      showCaption("He's almost finished the bucket...", 460, 660, 749);
+    }
+
+    // ── SCENE 3: Large women enter + player goes VERY shy (frames 760-1050) ─
+    if (t >= 760 && t < 1050) {
+      const sc3 = t - 760; // local 0-289
+
+      // Same living room BG
+      const lrG2=ctx.createLinearGradient(0,0,0,500);
+      lrG2.addColorStop(0,'#f5e6d3'); lrG2.addColorStop(1,'#e8c898');
+      ctx.fillStyle=lrG2; ctx.fillRect(0,0,800,500);
+      ctx.fillStyle='#c8a96e'; ctx.fillRect(0,420,800,80);
+      ctx.strokeStyle='#b8975a'; ctx.lineWidth=1;
+      for(let fx=0;fx<800;fx+=80){ctx.beginPath();ctx.moveTo(fx,420);ctx.lineTo(fx,500);ctx.stroke();}
+      // Couch
+      ctx.fillStyle='#8B4513'; ctx.beginPath(); ctx.roundRect(160,320,480,120,15); ctx.fill();
+      ctx.fillStyle='#A0522D'; ctx.beginPath(); ctx.roundRect(165,325,470,85,12); ctx.fill();
+      ctx.fillStyle='#c0804a';
+      ctx.beginPath(); ctx.roundRect(172,330,218,72,10); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(410,330,218,72,10); ctx.fill();
+      ctx.fillStyle='#8B4513';
+      ctx.beginPath(); ctx.roundRect(150,310,35,130,10); ctx.fill();
+      ctx.beginPath(); ctx.roundRect(615,310,35,130,10); ctx.fill();
+
+      // Lamp
+      ctx.fillStyle='#c8a06e'; ctx.fillRect(92,250,8,160);
+      ctx.fillStyle='#ffe8b0';
+      ctx.beginPath(); ctx.moveTo(66,250); ctx.lineTo(130,250); ctx.lineTo(118,184); ctx.lineTo(78,184); ctx.closePath(); ctx.fill();
+
+      // Empty KFC bucket + bone pile
+      ctx.save(); ctx.translate(370,400);
+      ctx.fillStyle='#CC0000';
+      ctx.beginPath(); ctx.moveTo(-22,0); ctx.lineTo(-28,-40); ctx.lineTo(28,-40); ctx.lineTo(22,0); ctx.closePath(); ctx.fill();
+      ctx.fillStyle='white'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center'; ctx.fillText('KFC',0,-22);
+      ctx.restore();
+      // Big pile of bones
+      for(let b2=0;b2<8;b2++){
+        const bx2=200+b2*48+Math.sin(b2*2.1)*10, by2=408+Math.cos(b2*1.9)*6;
+        ctx.save(); ctx.translate(bx2,by2); ctx.rotate(b2*0.7);
+        ctx.fillStyle='#EEE8D5';
+        ctx.beginPath(); ctx.ellipse(0,0,11,4,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='#CCC4A0'; ctx.lineWidth=1; ctx.stroke();
+        ctx.beginPath(); ctx.ellipse(-13,0,4,4,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(13,0,4,4,0,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+
+      // Door bursting open on left — women slide in
+      const numWomen = 3;
+      const doorOpen = Math.min(1, sc3/60);
+
+      // Door
+      ctx.save(); ctx.translate(80, 300);
+      ctx.fillStyle='#5D3A1A';
+      ctx.beginPath(); ctx.roundRect(-doorOpen*80, -100, 80, 220, 4); ctx.fill();
+      ctx.fillStyle='#7B4F25';
+      ctx.fillRect(-doorOpen*80+6, -94, 30, 90);
+      ctx.fillRect(-doorOpen*80+6, 4, 30, 90);
+      ctx.fillStyle='#FFD700';
+      ctx.beginPath(); ctx.arc(-doorOpen*80+72, 10, 5, 0, Math.PI*2); ctx.fill();
+      ctx.restore();
+
+      // Draw 3 large cartoon women sliding in from left
+      function drawLargeWoman(wx, wy, col, hairCol, slideProgress, idx) {
+        if (slideProgress <= 0) return;
+        ctx.save();
+        ctx.translate(wx, wy);
+
+        // Shadow
+        ctx.fillStyle='rgba(0,0,0,0.15)';
+        ctx.beginPath(); ctx.ellipse(0,120,45,12,0,0,Math.PI*2); ctx.fill();
+
+        // Big curvy legs
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.ellipse(-20,80,18,45,0.1,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(20,80,18,45,-0.1,0,Math.PI*2); ctx.fill();
+
+        // Shoes — heels
+        ctx.fillStyle='#FF1493';
+        ctx.beginPath(); ctx.ellipse(-22,126,16,7,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(22,126,16,7,0,0,Math.PI*2); ctx.fill();
+        // Heel spike
+        ctx.fillStyle='#CC0066';
+        ctx.fillRect(-28,120,4,14); ctx.fillRect(18,120,4,14);
+
+        // Wide hips & body
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.ellipse(0,30,52,60,0,0,Math.PI*2); ctx.fill();
+
+        // Scanty outfit — bright coloured mini dress
+        const dressColors=['#FF1493','#FF6B35','#FFD700'];
+        ctx.fillStyle=dressColors[idx%3];
+        ctx.beginPath(); ctx.roundRect(-48,-10,96,70,12); ctx.fill();
+        // Sparkle dots on dress
+        ctx.fillStyle='rgba(255,255,255,0.6)';
+        for(let sp=0;sp<6;sp++){
+          ctx.beginPath(); ctx.arc(-30+sp*12,10+Math.sin(sp)*15,2.5,0,Math.PI*2); ctx.fill();
+        }
+
+        // Arms - wavy animated
+        const armWave = Math.sin(Date.now()/400 + idx)*0.3;
+        ctx.fillStyle=col;
+        ctx.save(); ctx.translate(-52,-20); ctx.rotate(-0.5+armWave);
+        ctx.beginPath(); ctx.ellipse(0,0,14,36,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+        ctx.save(); ctx.translate(52,-20); ctx.rotate(0.5-armWave);
+        ctx.beginPath(); ctx.ellipse(0,0,14,36,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+        // Hands
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.arc(-55,-52,12,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(55,-52,12,0,Math.PI*2); ctx.fill();
+
+        // Neck
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.ellipse(0,-72,16,18,0,0,Math.PI*2); ctx.fill();
+
+        // Big expressive face
+        ctx.fillStyle=col;
+        ctx.beginPath(); ctx.ellipse(0,-106,36,38,0,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle='rgba(0,0,0,0.1)'; ctx.lineWidth=1; ctx.stroke();
+
+        // Hair - big voluminous
+        ctx.fillStyle=hairCol;
+        ctx.beginPath(); ctx.ellipse(0,-132,38,22,0,Math.PI,Math.PI*2); ctx.fill();
+        // Hair volume sides
+        ctx.beginPath(); ctx.ellipse(-32,-112,16,28,0.5,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(32,-112,16,28,-0.5,0,Math.PI*2); ctx.fill();
+        if(idx===0) {
+          // Curly extra volume
+          for(let cu=0;cu<5;cu++){
+            ctx.beginPath(); ctx.arc(-38+cu*18,-138+Math.sin(cu)*8,10,0,Math.PI*2); ctx.fill();
+          }
+        }
+
+        // Big flirty eyes with lashes
+        ctx.fillStyle='white';
+        ctx.beginPath(); ctx.ellipse(-14,-110,12,10,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(14,-110,12,10,0,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#1a0a2e';
+        ctx.beginPath(); ctx.ellipse(-14,-110,7,7,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(14,-110,7,7,0,0,Math.PI*2); ctx.fill();
+        // Lashes
+        ctx.strokeStyle='#1a0a2e'; ctx.lineWidth=2;
+        for(let l2=0;l2<5;l2++){
+          const la=-0.8+l2*0.4;
+          ctx.beginPath(); ctx.moveTo(-14+Math.cos(la-Math.PI/2)*10,-110+Math.sin(la-Math.PI/2)*10);
+          ctx.lineTo(-14+Math.cos(la-Math.PI/2)*16,-110+Math.sin(la-Math.PI/2)*16); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(14+Math.cos(la-Math.PI/2)*10,-110+Math.sin(la-Math.PI/2)*10);
+          ctx.lineTo(14+Math.cos(la-Math.PI/2)*16,-110+Math.sin(la-Math.PI/2)*16); ctx.stroke();
+        }
+        // Eyeshadow
+        ctx.fillStyle='rgba(180,0,120,0.4)';
+        ctx.beginPath(); ctx.ellipse(-14,-115,12,6,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(14,-115,12,6,0,0,Math.PI*2); ctx.fill();
+        // Red lips — big smile
+        ctx.fillStyle='#CC0044';
+        ctx.beginPath(); ctx.arc(0,-96,14,0.2,Math.PI-0.2); ctx.fill();
+        ctx.fillStyle='#FF4488';
+        ctx.beginPath(); ctx.arc(0,-96,14,0.2,Math.PI-0.2); ctx.stroke();
+        // Rosy cheeks
+        ctx.fillStyle='rgba(255,100,150,0.35)';
+        ctx.beginPath(); ctx.ellipse(-24,-108,10,7,0.3,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(24,-108,10,7,-0.3,0,Math.PI*2); ctx.fill();
+
+        // Heart eyes if very close to Devi
+        if (sc3 > 120) {
+          ctx.fillStyle='#FF1493';
+          ctx.font='18px serif'; ctx.textAlign='center';
+          ctx.fillText('❤', -14,-108);
+          ctx.fillText('❤', 14,-108);
+        }
+
+        ctx.restore();
+      }
+
+      // Slide women in one by one
+      const w1prog = Math.min(1, Math.max(0, (sc3-0)/50));
+      const w2prog = Math.min(1, Math.max(0, (sc3-30)/50));
+      const w3prog = Math.min(1, Math.max(0, (sc3-60)/50));
+
+      const w1x = 130 + w1prog * 170;
+      const w2x = 130 + w2prog * 280;
+      const w3x = 130 + w3prog * 390;
+
+      drawLargeWoman(w3x, 350, '#FDBCB4', '#2c1500', w3prog, 2);
+      drawLargeWoman(w2x, 350, '#C68642', '#1a1a1a', w2prog, 1);
+      drawLargeWoman(w1x, 350, '#F1C27D', '#CC4400', w1prog, 0);
+
+      // Devi on couch — gets increasingly shy
+      const shyLevel = Math.min(1, Math.max(0, (sc3-40)/120));
+      player.x=380 + shyLevel*20; player.y=288;
+      player.onGround=true; player.vx=0; player.facing=-1; player.frame=0;
+      drawDevi();
+
+      // Shy blush on Devi
+      if (shyLevel > 0.1) {
+        ctx.globalAlpha=shyLevel;
+        ctx.fillStyle='rgba(255,100,100,0.5)';
+        ctx.beginPath(); ctx.ellipse(player.x+28,player.y+10,10,7,0,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.ellipse(player.x+10,player.y+10,10,7,0,0,Math.PI*2); ctx.fill();
+        ctx.globalAlpha=1;
+      }
+
+      // Sweat drop
+      if (shyLevel > 0.4) {
+        const sweatBob = Math.sin(Date.now()/150)*3;
+        ctx.save(); ctx.translate(player.x+45, player.y-5+sweatBob);
+        ctx.fillStyle='#87CEEB';
+        ctx.beginPath(); ctx.moveTo(0,-8); ctx.quadraticCurveTo(6,0,0,8); ctx.quadraticCurveTo(-6,0,0,-8); ctx.fill();
+        ctx.restore();
+      }
+
+      // Devi speech bubble "😳" if very shy
+      if (sc3 > 130) {
+        const bAlpha = Math.min(1,(sc3-130)/20);
+        ctx.globalAlpha=bAlpha;
+        ctx.fillStyle='white'; ctx.strokeStyle='#999';
+        ctx.beginPath(); ctx.roundRect(player.x+36,player.y-38,42,28,8); ctx.fill();
+        ctx.lineWidth=1.5; ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(player.x+42,player.y-10); ctx.lineTo(player.x+50,player.y-3); ctx.lineTo(player.x+56,player.y-10); ctx.fill();
+        ctx.font='18px serif'; ctx.textAlign='center';
+        ctx.fillText('😳', player.x+57, player.y-17);
+        ctx.globalAlpha=1;
+      }
+
+      // Hearts floating up
+      if (sc3 > 100) {
+        for(let h=0;h<5;h++){
+          const hx=180+h*100, hy=300-((sc3-100+h*40)%200);
+          const ha=Math.max(0,Math.min(1,1-((sc3-100+h*40)%200)/200));
+          ctx.globalAlpha=ha*0.8;
+          ctx.font='20px serif'; ctx.textAlign='center';
+          ctx.fillText('💕', hx, hy);
+        }
+        ctx.globalAlpha=1;
+      }
+
+      showCaption("Suddenly...", 460, 760, 830, false, 'rgba(255,255,255,0.9)');
+      showCaption("Three large women enter uninvited... 💃", 460, 840, 930);
+      showCaption("You go very, very quiet. \u{1F633}", 460, 940, 1030);
+
+      // Ladies dance after sc3 > 160 — bounce + arm wave animation
+      if (sc3 > 160) {
+        const danceT = (sc3 - 160);
+        // Dance floor disco lights
+        const discoColors = ['#FF1493','#FF6B35','#FFD700','#00BFFF','#7B2FFF'];
+        for (let dl=0; dl<8; dl++) {
+          const dlx = 80 + dl*90;
+          ctx.globalAlpha = 0.18 + Math.sin(Date.now()/200 + dl) * 0.12;
+          ctx.fillStyle = discoColors[dl % 5];
+          ctx.beginPath();
+          ctx.arc(dlx, 440, 50 + Math.sin(Date.now()/150 + dl) * 10, 0, Math.PI*2);
+          ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+
+        // Disco ball
+        const dbPulse = 0.9 + Math.sin(Date.now()/100)*0.1;
+        ctx.save(); ctx.translate(400, 40); ctx.scale(dbPulse,dbPulse);
+        ctx.fillStyle='#DDD';
+        ctx.beginPath(); ctx.arc(0,0,22,0,Math.PI*2); ctx.fill();
+        // Mirror tiles
+        for(let mt=0;mt<16;mt++){
+          const ma=mt*(Math.PI*2/16)+Date.now()/2000;
+          const mx=Math.cos(ma)*14, my=Math.sin(ma)*14;
+          ctx.fillStyle=discoColors[mt%5];
+          ctx.globalAlpha=0.7+Math.sin(Date.now()/100+mt)*0.3;
+          ctx.beginPath(); ctx.roundRect(mx-4,my-4,8,8,1); ctx.fill();
+        }
+        ctx.globalAlpha=1;
+        // Light rays from disco ball
+        ctx.strokeStyle='rgba(255,255,200,0.25)';
+        ctx.lineWidth=2;
+        for(let lr=0;lr<8;lr++){
+          const lra = lr*Math.PI/4 + Date.now()/1000;
+          ctx.beginPath(); ctx.moveTo(Math.cos(lra)*22,Math.sin(lra)*22);
+          ctx.lineTo(Math.cos(lra)*200,Math.sin(lra)*200); ctx.stroke();
+        }
+        ctx.restore();
+
+        // Musical notes floating
+        const noteChars=['♪','♫','🎵','🎶'];
+        for(let n=0;n<4;n++){
+          const nx=150+n*140, ny=350-((danceT*1.2+n*55)%300);
+          const na=Math.max(0,Math.min(1,1-((danceT+n*55)%300)/300));
+          ctx.globalAlpha=na*0.8;
+          ctx.font='22px serif'; ctx.textAlign='center';
+          ctx.fillText(noteChars[n%4], nx, ny);
+        }
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // ── SCENE 4: THE END (frames 1050+) ───────────────────────────────────
+    if (t >= 1050) {
+      // Fade to black
+      const fadeBlack = Math.min(1,(t-1050)/60);
+      ctx.fillStyle=`rgba(0,0,0,${fadeBlack})`;
+      ctx.fillRect(0,0,800,500);
+      if (t > 1090) {
+        const te = t-1090;
+        const ta = Math.min(1,te/40);
+        ctx.globalAlpha=ta;
+        ctx.fillStyle='#FFD700'; ctx.font='bold 60px Comic Sans MS, cursive';
+        ctx.shadowColor='#FF8C00'; ctx.shadowBlur=24;
+        ctx.textAlign='center'; ctx.fillText('THE END  💤', 400, 240);
+        ctx.shadowBlur=0;
+        ctx.fillStyle='white'; ctx.font='italic 22px Comic Sans MS, cursive';
+        ctx.fillText('Final Score: '+score, 400, 300);
+        ctx.globalAlpha=1;
+      }
+    }
+
+    // Final play-again prompt
+    if (t > 1150) {
+      const fa=Math.min(1,(t-1150)/30);
+      ctx.globalAlpha=fa;
+      ctx.fillStyle='white'; ctx.font='20px Comic Sans MS, cursive'; ctx.textAlign='center';
+      ctx.fillText('Final Score: ' + score, 400, 300);
+      const pA2=0.5+Math.sin(Date.now()/400)*0.5;
+      ctx.globalAlpha=fa*pA2;
+      ctx.fillStyle='#FFD700';
+      ctx.font='bold 15px Comic Sans MS, cursive';
+      ctx.fillText(isTouchDevice?'Tap to play again':'Press SPACE to play again', 400, 340);
+      ctx.globalAlpha=1;
+    }
+  }
+
+  const _isBath = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+  if (_isBath) {
+    updateTopDown();
+    updateParticles();
+  } else {
+    updatePlayer();
+    updateEnemies();
+    updateBoss();
+    updateDeliveryBoss();
+    updateBombs();
+    updateParticles();
+  }
+
+  requestAnimationFrame(gameLoop);
+}
+
+// ── MOBILE SETUP ────────────────────────────────────────────────────────────
+
+// Scale canvas to fit screen — leave room for virtual controls on mobile
+function resizeCanvas() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  // Reserve only 120px for smaller controls on mobile
+  const reservedH = isTouchDevice ? 120 : 0;
+  const availH = vh - reservedH - 4;
+  const availW = vw - 4;
+  const scaleW = availW / 800;
+  const scaleH = availH / 500;
+  const scale = Math.min(1, scaleW, scaleH);
+  canvas.style.width  = Math.floor(800 * scale) + 'px';
+  canvas.style.height = Math.floor(500 * scale) + 'px';
+  const wrapper = document.getElementById('gameWrapper');
+  if (wrapper) wrapper.style.marginTop = '2px';
+}
+// Must run after isTouchDevice is defined — we call it later
+window.addEventListener('resize', resizeCanvas);
+window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 200));
+
+// Detect touch device
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+
+// Now that isTouchDevice is defined, do initial resize
+resizeCanvas();
+
+// Show controls on touch
+if (isTouchDevice) {
+  document.getElementById('virtualControls').style.display = 'block';
+  document.getElementById('instructions').style.display = 'none';
+}
+
+// Helper: advance game state on tap/click (non-button taps)
+function handleTapAdvance() {
+  if (gameState === STATE.INTRO) { gameState = STATE.MENU; introTimer = 0; }
+  else if (gameState === STATE.MENU) startLevel(0);
+  else if (gameState === STATE.LEVEL_COMPLETE) {
+    const wasDelivery2 = LEVELS[currentLevel] && LEVELS[currentLevel].isDeliveryBoss;
+    const wasBathroom2 = LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel;
+    currentLevel++;
+    if (wasBathroom2) { cinematicTimer = 0; gameState = STATE.LIVING_ROOM; }
+    else if (wasDelivery2 || currentLevel >= LEVELS.length) { cinematicTimer = 0; gameState = STATE.LIVING_ROOM; }
+    else startLevel(currentLevel);
+  }
+  else if (gameState === STATE.GAME_OVER) { score = 0; lives = 3; currentLevel = 0; startLevel(0); }
+  else if (gameState === STATE.WIN) { score = 0; lives = 3; currentLevel = 0; gameState = STATE.MENU; }
+  else if (gameState === STATE.LIVING_ROOM) { if (cinematicTimer > 180) { cinematicTimer = 0; gameState = STATE.DELIVERY_CUTSCENE; } }
+  else if (gameState === STATE.DELIVERY_CUTSCENE) { if (cinematicTimer > 200) { startDeliveryBoss(); } }
+  else if (gameState === STATE.ENDING) { if (endingTimer > 1150) { score = 0; lives = 3; currentLevel = 0; gameState = STATE.MENU; } }
+}
+
+// Canvas-wide tap — advance states. Bathroom level swipe is handled separately.
+canvas.addEventListener('touchend', (e) => {
+  if (e.target && e.target.classList && e.target.classList.contains('vbtn')) return;
+  // Don't advance state if playing or in bathroom (those need proper button/swipe)
+  if (gameState === STATE.PLAYING &&
+      !(LEVELS[currentLevel] && LEVELS[currentLevel].isBathroomLevel)) return;
+  e.preventDefault();
+  handleTapAdvance();
+}, {passive: false});
+
+// Also allow mouse click on desktop for state advancing
+canvas.addEventListener('click', (e) => {
+  if (gameState !== STATE.PLAYING) handleTapAdvance();
+});
+
+// Show bomb button only on level 3 (boss level)
+function updateBombButton() {
+  const btn = document.getElementById('btnBomb');
+  const lv = LEVELS[currentLevel];
+  const isBoss = lv && (lv.isBossLevel || lv.isDeliveryBoss);
+  const isBath = lv && lv.isBathroomLevel;
+  if (!isTouchDevice) return;
+  if (btn) btn.style.display = isBoss ? 'flex' : 'none';
+
+  // On bathroom level: convert D-pad to WASD arrows, hide jump
+  const btnJump = document.getElementById('btnJump');
+  const btnLeft = document.getElementById('btnLeft');
+  const btnRight = document.getElementById('btnRight');
+  if (isBath) {
+    if (btnLeft)  { btnLeft.textContent  = '◀'; }
+    if (btnRight) { btnRight.textContent = '▶'; }
+    if (btnJump)  { btnJump.style.display='none'; }
+    // Add up/down buttons if not already present
+    if (!document.getElementById('btnUp')) {
+      const bu=document.createElement('div');bu.className='vbtn';bu.id='btnUp';bu.textContent='▲';
+      bu.style.cssText='width:52px;height:52px;left:43px;bottom:112px;';
+      document.getElementById('virtualControls').appendChild(bu);
+      setupVBtn('btnUp','ArrowUp');
+      const bd=document.createElement('div');bd.className='vbtn';bd.id='btnDown';bd.textContent='▼';
+      bd.style.cssText='width:52px;height:52px;left:43px;bottom:8px;';
+      document.getElementById('virtualControls').appendChild(bd);
+      setupVBtn('btnDown','ArrowDown');
+    }
+    document.getElementById('btnUp').style.display='flex';
+    document.getElementById('btnDown').style.display='flex';
+  } else {
+    if (btnJump) btnJump.style.display='flex';
+    if (document.getElementById('btnUp'))   document.getElementById('btnUp').style.display='none';
+    if (document.getElementById('btnDown')) document.getElementById('btnDown').style.display='none';
+  }
+}
+
+// Virtual button touch handling – mirrors keyboard keys
+function setupVBtn(id, keyCode) {
+  const btn = document.getElementById(id);
+  if (!btn) return;
+  function press(e)   { e.preventDefault(); keys[keyCode] = true;  btn.classList.add('pressed'); }
+  function release(e) { e.preventDefault(); keys[keyCode] = false; btn.classList.remove('pressed'); }
+  btn.addEventListener('touchstart',  press,   {passive:false});
+  btn.addEventListener('touchend',    release, {passive:false});
+  btn.addEventListener('touchcancel', release, {passive:false});
+  // Also mouse for desktop testing
+  btn.addEventListener('mousedown', press);
+  btn.addEventListener('mouseup',   release);
+  btn.addEventListener('mouseleave',release);
+}
+
+setupVBtn('btnLeft',  'ArrowLeft');
+setupVBtn('btnRight', 'ArrowRight');
+setupVBtn('btnJump',  'Space');
+setupVBtn('btnBomb',  'KeyZ');
+
+// Swipe support for top-down bathroom level
+let _swipeX=0, _swipeY=0, _swipeActive=false;
+canvas.addEventListener('touchstart', e=>{
+  _swipeX=e.touches[0].clientX; _swipeY=e.touches[0].clientY;
+  _swipeActive=true;
+  if(gameState===STATE.PLAYING) e.preventDefault();
+},{passive:false});
+canvas.addEventListener('touchend', e=>{
+  if(!_swipeActive) return;
+  _swipeActive=false;
+  if(!LEVELS[currentLevel]||!LEVELS[currentLevel].isBathroomLevel) return;
+  const dx=e.changedTouches[0].clientX-_swipeX;
+  const dy=e.changedTouches[0].clientY-_swipeY;
+  if(Math.abs(dx)<8 && Math.abs(dy)<8) return; // ignore micro-taps
+  if(Math.abs(dx)>Math.abs(dy)){
+    tdPlayer.ndx=dx>0?1:-1; tdPlayer.ndy=0;
+  } else {
+    tdPlayer.ndx=0; tdPlayer.ndy=dy>0?1:-1;
+  }
+},{passive:true});
+
+// ─── AUDIO ENGINE ────────────────────────────────────────────────────────────
+let audioCtx = null;
+let currentTrack = null;
+let trackNodes = [];
+let audioStarted = false;
+
+function initAudio() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+function stopMusic() {
+  trackNodes.forEach(n => { try { n.stop(); } catch(e){} });
+  trackNodes = [];
+  if (currentTrack) clearInterval(currentTrack);
+  currentTrack = null;
+}
+
+function playNote(freq, start, dur, vol=0.15, type='square') {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.setValueAtTime(0, audioCtx.currentTime + start);
+  g.gain.linearRampToValueAtTime(vol, audioCtx.currentTime + start + 0.01);
+  g.gain.linearRampToValueAtTime(0, audioCtx.currentTime + start + dur - 0.01);
+  o.start(audioCtx.currentTime + start);
+  o.stop(audioCtx.currentTime + start + dur);
+  trackNodes.push(o);
+}
+
+function playDrum(type, start, vol=0.3) {
+  if (!audioCtx) return;
+  const buf = audioCtx.createBuffer(1, audioCtx.sampleRate * 0.15, audioCtx.sampleRate);
+  const data = buf.getChannelData(0);
+  if (type === 'kick') {
+    for (let i=0;i<data.length;i++) {
+      const t2 = i/audioCtx.sampleRate;
+      data[i] = Math.sin(2*Math.PI*80*Math.exp(-t2*15)*t2*10) * Math.exp(-t2*8) * vol * 2;
+    }
+  } else if (type === 'snare') {
+    for (let i=0;i<data.length;i++) {
+      const t2 = i/audioCtx.sampleRate;
+      data[i] = (Math.random()*2-1) * Math.exp(-t2*20) * vol;
+    }
+  } else if (type === 'hihat') {
+    for (let i=0;i<data.length;i++) {
+      const t2 = i/audioCtx.sampleRate;
+      data[i] = (Math.random()*2-1) * Math.exp(-t2*60) * vol * 0.4;
+    }
+  }
+  const src = audioCtx.createBufferSource();
+  src.buffer = buf;
+  src.connect(audioCtx.destination);
+  src.start(audioCtx.currentTime + start);
+  trackNodes.push(src);
+}
+
+// ── TRACKS ────────────────────────────────────────────────────────────────────
+function playOfficeLoop() {
+  if (!audioCtx || !audioStarted) return;
+  stopMusic();
+  // Funky office beat — 90s hip hop flavour
+  const bpm = 92, beat = 60/bpm;
+  function scheduleBar() {
+    const now = 0;
+    // Kick on 1 & 3
+    playDrum('kick',  now + 0);
+    playDrum('kick',  now + beat*2);
+    // Snare on 2 & 4
+    playDrum('snare', now + beat);
+    playDrum('snare', now + beat*3);
+    // Hi-hats every 8th note
+    for(let h=0;h<8;h++) playDrum('hihat', now + beat*h*0.5, 0.15);
+    // Funky bass line — classic 90s hip hop bassline
+    const bassNotes = [65,65,0,73,0,65,70,0]; // F2,F2,_,C#3,_,F2,Bb2,_
+    bassNotes.forEach((freq,i) => {
+      if(freq) playNote(freq, now+beat*i*0.5, beat*0.45, 0.22, 'sawtooth');
+    });
+    // Stab chord (jazz-ish)
+    [196,247,294].forEach(f => playNote(f, now+beat*2.5, beat*0.3, 0.07, 'square'));
+    [196,247,294].forEach(f => playNote(f, now+beat*3.5, beat*0.2, 0.06, 'square'));
+  }
+  scheduleBar();
+  currentTrack = setInterval(scheduleBar, beat*4*1000);
+}
+
+function playBossLoop() {
+  if (!audioCtx || !audioStarted) return;
+  stopMusic();
+  const bpm = 100, beat = 60/bpm;
+  function scheduleBar() {
+    // Harder beat for toilet boss
+    playDrum('kick',  0);
+    playDrum('kick',  beat*0.75);
+    playDrum('kick',  beat*2);
+    playDrum('snare', beat);
+    playDrum('snare', beat*3);
+    for(let h=0;h<16;h++) playDrum('hihat', beat*h*0.25, 0.12);
+    // Menacing bass
+    [55,55,58,55,52,55,0,49].forEach((f,i) => {
+      if(f) playNote(f, beat*i*0.5, beat*0.4, 0.25, 'sawtooth');
+    });
+    // Eerie high melody
+    [523,0,494,0,523,0,554,523].forEach((f,i) => {
+      if(f) playNote(f, beat*i*0.5, beat*0.3, 0.04, 'sine');
+    });
+  }
+  scheduleBar();
+  currentTrack = setInterval(scheduleBar, beat*4*1000);
+}
+
+function playBathroomLoop() {
+  if (!audioCtx || !audioStarted) return;
+  stopMusic();
+  const bpm = 105, beat = 60/bpm;
+  function scheduleBar() {
+    // Pac-man chase energy — tense 90s bop
+    playDrum('kick',  0); playDrum('kick', beat*1.5);
+    playDrum('kick',  beat*2.5);
+    playDrum('snare', beat); playDrum('snare', beat*3);
+    for(let h=0;h<8;h++) playDrum('hihat', beat*h*0.5, 0.18);
+    [110,110,0,123,0,110,98,0].forEach((f,i)=>{
+      if(f) playNote(f, beat*i*0.5, beat*0.4, 0.2, 'sawtooth');
+    });
+    // Tense staccato hits
+    [392,0,0,440,0,0,392,370].forEach((f,i)=>{
+      if(f) playNote(f, beat*i*0.5, beat*0.15, 0.05, 'square');
+    });
+  }
+  scheduleBar();
+  currentTrack = setInterval(scheduleBar, beat*4*1000);
+}
+
+function playDeliveryLoop() {
+  if (!audioCtx || !audioStarted) return;
+  stopMusic();
+  const bpm = 108, beat = 60/bpm;
+  function scheduleBar() {
+    // Hard hype beat for delivery boss fight
+    playDrum('kick', 0); playDrum('kick', beat*0.5);
+    playDrum('kick', beat*2); playDrum('kick', beat*2.75);
+    playDrum('snare', beat); playDrum('snare', beat*3);
+    for(let h=0;h<16;h++) playDrum('hihat', beat*h*0.25, 0.15);
+    [73,73,0,82,0,73,78,0].forEach((f,i)=>{
+      if(f) playNote(f, beat*i*0.5, beat*0.4, 0.24, 'sawtooth');
+    });
+    // Hype horn stabs
+    [[196,247],[0,0],[233,294],[0,0],[220,277],[0,0],[196,247],[175,220]].forEach(([f1,f2],i)=>{
+      if(f1){ playNote(f1, beat*i*0.5, beat*0.2, 0.07, 'square'); }
+      if(f2){ playNote(f2, beat*i*0.5, beat*0.2, 0.06, 'square'); }
+    });
+  }
+  scheduleBar();
+  currentTrack = setInterval(scheduleBar, beat*4*1000);
+}
+
+function playEndingLoop() {
+  if (!audioCtx || !audioStarted) return;
+  stopMusic();
+  const bpm = 85, beat = 60/bpm;
+  function scheduleBar() {
+    // Smooth laid-back 90s R&B/hip-hop for the ending
+    playDrum('kick', 0); playDrum('kick', beat*2.5);
+    playDrum('snare', beat*1.5); playDrum('snare', beat*3.5);
+    for(let h=0;h<8;h++) playDrum('hihat', beat*h*0.5, 0.1);
+    // Silky bass
+    [87,87,0,98,87,0,82,87].forEach((f,i)=>{
+      if(f) playNote(f, beat*i*0.5, beat*0.48, 0.18, 'sine');
+    });
+    // Smooth chords
+    [[196,247,294],[0,0,0],[220,277,330],[0,0,0]].forEach(([f1,f2,f3],i)=>{
+      if(f1){
+        playNote(f1, beat*i, beat*0.8, 0.04, 'sine');
+        playNote(f2, beat*i, beat*0.8, 0.04, 'sine');
+        playNote(f3, beat*i, beat*0.8, 0.03, 'sine');
+      }
+    });
+  }
+  scheduleBar();
+  currentTrack = setInterval(scheduleBar, beat*4*1000);
+}
+
+// ── SOUND EFFECTS ─────────────────────────────────────────────────────────────
+function sfxCollect() {
+  if (!audioCtx || !audioStarted) return;
+  playNote(880, 0,    0.06, 0.12, 'sine');
+  playNote(1100,0.06, 0.06, 0.1,  'sine');
+}
+function sfxHit() {
+  if (!audioCtx || !audioStarted) return;
+  playDrum('snare', 0, 0.5);
+  playNote(110, 0, 0.15, 0.18, 'sawtooth');
+}
+function sfxJump() {
+  if (!audioCtx || !audioStarted) return;
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type='sine'; o.frequency.setValueAtTime(300,audioCtx.currentTime);
+  o.frequency.linearRampToValueAtTime(600,audioCtx.currentTime+0.12);
+  g.gain.setValueAtTime(0.1,audioCtx.currentTime);
+  g.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.15);
+  o.start(); o.stop(audioCtx.currentTime+0.15);
+  trackNodes.push(o);
+}
+function sfxBossHit() {
+  if (!audioCtx || !audioStarted) return;
+  playDrum('kick', 0, 0.8);
+  playNote(220, 0, 0.1, 0.2, 'sawtooth');
+  playNote(165, 0.05, 0.15, 0.15, 'sawtooth');
+}
+function sfxBomb() {
+  if (!audioCtx || !audioStarted) return;
+  playDrum('kick', 0, 1.0);
+  [200,150,100].forEach((f,i) => playNote(f, i*0.04, 0.1, 0.15, 'sawtooth'));
+}
+function sfxWin() {
+  if (!audioCtx || !audioStarted) return;
+  [523,659,784,1047].forEach((f,i) => playNote(f, i*0.12, 0.2, 0.15, 'sine'));
+}
+function sfxCaught() {
+  if (!audioCtx || !audioStarted) return;
+  [400,350,300,250].forEach((f,i) => playNote(f, i*0.08, 0.1, 0.18, 'sawtooth'));
+}
+function sfxDoorbell() {
+  if (!audioCtx || !audioStarted) return;
+  playNote(830, 0,   0.25, 0.15, 'sine');
+  playNote(622, 0.3, 0.25, 0.12, 'sine');
+}
+
+// ── HOOK MUSIC TO GAME STATE ──────────────────────────────────────────────────
+let _lastMusicState = null;
+function updateMusic() {
+  const lv = LEVELS[currentLevel];
+  let trackKey = gameState + '_' + currentLevel;
+  if (trackKey === _lastMusicState) return;
+  _lastMusicState = trackKey;
+
+  if (gameState === STATE.PLAYING) {
+    if (lv && lv.isBossLevel)        playBossLoop();
+    else if (lv && lv.isBathroomLevel) playBathroomLoop();
+    else if (lv && lv.isDeliveryBoss) playDeliveryLoop();
+    else                               playOfficeLoop();
+  } else if (gameState === STATE.ENDING || gameState === STATE.LIVING_ROOM) {
+    playEndingLoop();
+  } else if (gameState === STATE.MENU || gameState === STATE.INTRO) {
+    playOfficeLoop();
+  } else {
+    stopMusic();
+  }
+}
+
+// Start audio on first user interaction
+function startAudioOnInteraction() {
+  if (audioStarted) return;
+  initAudio();
+  audioStarted = true;
+  updateMusic();
+}
+// Landscape nudge on very small portrait screens
+function checkOrientation() {
+  const hint = document.getElementById('landscapeHint');
+  if (!hint) return;
+  const needsLandscape = window.innerWidth < 480 && window.innerHeight > window.innerWidth;
+  hint.style.display = needsLandscape ? 'flex' : 'none';
+}
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', () => setTimeout(checkOrientation, 300));
+checkOrientation();
+
+document.addEventListener('keydown', startAudioOnInteraction, {once:false});
+document.addEventListener('touchstart', startAudioOnInteraction, {once:false});
+canvas.addEventListener('click', startAudioOnInteraction, {once:false});
+
+gameLoop();
+</script>
+</body>
+</html>
