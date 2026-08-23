@@ -2,16 +2,24 @@ import { useRef, useEffect, useMemo } from 'react'
 import ForceGraph3DImport from '3d-force-graph'
 const ForceGraph3D = ForceGraph3DImport as any
 import * as THREE from 'three'
-import type { GraphNode } from '../data/types'
-import { NODE_COLORS, TYPE_LABELS } from './buildGraph'
+import type { GraphNode, GraphLink } from '../data/types'
+import { NODE_COLORS, TYPE_LABELS, RELATION_LABELS } from './buildGraph'
 import { riskScore, riskLevel, RISK_COLORS, fmtK } from '../analytics/risk'
 import { lensStyle, buildLensContext, LENSES, type LensId } from '../analytics/lenses'
 import { egoNetwork } from '../analytics/centrality'
+import { selectionContext, type ContextTier } from '../analytics/selection'
+import type { RelationType } from '../data/types'
+
+/** Hex → rgba() so link and node colours can carry a tier's opacity. */
+function rgba(hex: string, alpha: number): string {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16))
+  return `rgba(${r},${g},${b},${alpha})`
+}
 
 /* ─── Props ─── */
 interface Props {
   nodes: GraphNode[]
-  links: { source: GraphNode; target: GraphNode }[]
+  links: GraphLink[]
   visibleTypes: Record<string, boolean>
   selected: GraphNode | null
   onSelect: (n: GraphNode | null) => void
@@ -48,10 +56,83 @@ interface FGNode {
 interface FGLink {
   source: string
   target: string
+  relation: RelationType
+  /** Endpoint types captured at build time so colouring needs no lookup. */
+  sType: string
+  tType: string
 }
 
-function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set<string> | null, expiringSet: Set<string>): THREE.Object3D {
-  const isDim = highlightSet && !highlightSet.has(n.id)
+/**
+ * Draw a name label on a dark plate at a size that does not shrink with the
+ * node. Small nodes previously produced unreadable sprites at the camera
+ * distance a selection leaves you at.
+ */
+function makeLabelSprite(
+  title: string, subtitle: string | undefined,
+  opts: {
+    bold?: boolean; scale?: number; titleColor?: string; subtitleColor?: string
+    /** Hold a constant on-screen size instead of shrinking with distance. */
+    fixedScreenSize?: boolean
+  }
+): THREE.Sprite {
+  const W = 512, H = subtitle ? 128 : 84
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const c = canvas.getContext('2d')!
+  c.clearRect(0, 0, W, H)
+
+  const text = title.length > 30 ? title.slice(0, 29) + '…' : title
+  c.font = `${opts.bold ? '600 ' : ''}44px Inter, system-ui, sans-serif`
+  const titleW = c.measureText(text).width
+  const subW = subtitle ? (c.font = '30px Inter, system-ui, sans-serif', c.measureText(subtitle).width) : 0
+  const plateW = Math.min(W - 8, Math.max(titleW, subW) + 40)
+
+  // Backing plate keeps text legible over bright nodes and links.
+  c.fillStyle = 'rgba(8,12,20,0.82)'
+  const x = (W - plateW) / 2
+  c.beginPath()
+  c.roundRect(x, 4, plateW, H - 8, 12)
+  c.fill()
+  c.strokeStyle = 'rgba(51,65,85,0.9)'
+  c.lineWidth = 2
+  c.stroke()
+
+  c.textAlign = 'center'
+  c.textBaseline = 'middle'
+  c.fillStyle = opts.titleColor ?? '#F1F5F9'
+  c.font = `${opts.bold ? '600 ' : ''}44px Inter, system-ui, sans-serif`
+  c.fillText(text, W / 2, subtitle ? 44 : H / 2)
+  if (subtitle) {
+    c.fillStyle = opts.subtitleColor ?? '#94A3B8'
+    c.font = '30px Inter, system-ui, sans-serif'
+    c.fillText(subtitle, W / 2, 90)
+  }
+
+  const tex = new THREE.CanvasTexture(canvas)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: tex, transparent: true, depthWrite: false,
+    sizeAttenuation: !opts.fixedScreenSize,
+  }))
+  const s = opts.scale ?? 1
+  const base = opts.fixedScreenSize ? 0.22 : 22
+  sprite.scale.set(base * s, (base * s * H) / W, 1)
+  // Shifting the sprite's own centre clears the node by a constant on-screen
+  // amount, which a world-space y offset cannot do at varying camera distance.
+  if (opts.fixedScreenSize) sprite.center.set(0.5, 1.35)
+  return sprite
+}
+
+function makeNodeObject(
+  n: FGNode,
+  selected: GraphNode | null,
+  tierMap: Map<string, ContextTier> | null,
+  relations: Map<string, RelationType>,
+  expiringSet: Set<string>
+): THREE.Object3D {
+  const tier: ContextTier | undefined = tierMap ? tierMap.get(n.id) : undefined
+  const isDim = tierMap !== null && tier === undefined
+  const isRelated = tier === 'related'
   const group = new THREE.Group()
 
   if (isDim) {
@@ -67,7 +148,7 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
   canvas.height = 64
   const ctx = canvas.getContext('2d')!
   ctx.clearRect(0, 0, 128, 64)
-  ctx.fillStyle = '#FFFFFF'
+  ctx.fillStyle = isRelated ? 'rgba(255,255,255,0.5)' : '#FFFFFF'
   ctx.font = 'bold 36px Inter, system-ui, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
@@ -107,29 +188,37 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
     group.add(new THREE.Mesh(selGeo, selMat))
   }
 
-  // Name label below
-  if (!isDim && (selected?.key === n.id || n.labelAlways || (highlightSet?.has(n.id)) || n.type !== 'contract')) {
-    const lCanvas = document.createElement('canvas')
-    lCanvas.width = 256
-    lCanvas.height = 48
-    const lCtx = lCanvas.getContext('2d')!
-    lCtx.clearRect(0, 0, 256, 48)
-    lCtx.fillStyle = selected?.key === n.id ? '#FFFFFF' : '#9CA3AF'
-    lCtx.font = `${selected?.key === n.id ? 'bold ' : ''}18px Inter, system-ui, sans-serif`
-    lCtx.textAlign = 'center'
-    lCtx.textBaseline = 'middle'
-    const label = n.name.length > 24 ? n.name.slice(0, 23) + '…' : n.name
-    lCtx.fillText(label, 128, 20)
-    if (n.graphNode.value > 0) {
-      lCtx.fillStyle = '#6B7280'
-      lCtx.font = '13px Inter, system-ui, sans-serif'
-      lCtx.fillText(fmtK(n.graphNode.value), 128, 40)
-    }
-    const lTex = new THREE.CanvasTexture(lCanvas)
-    const lSpriteMat = new THREE.SpriteMaterial({ map: lTex, transparent: true, depthWrite: false })
-    const lSprite = new THREE.Sprite(lSpriteMat)
-    lSprite.scale.set(r * 8, r * 1.5, 1)
-    lSprite.position.y = -(r * 2.5)
+  // ─── Labels ───
+  // In a selection context every surviving node is labelled, and direct
+  // neighbours say how they relate. Outside one, the previous behaviour holds:
+  // entities and lens-promoted nodes are labelled, loose contracts are not.
+  const inContext = tierMap !== null
+  const isCore = tier === 'core' || selected?.key === n.id
+  const showLabel = inContext
+    ? true
+    : (isCore || n.labelAlways || n.type !== 'contract')
+
+  if (showLabel) {
+    const relation = relations.get(n.id)
+    const value = n.graphNode.value > 0 ? fmtK(n.graphNode.value) : undefined
+
+    // "Sanne de Vries · owner" tells you what the connection means.
+    const subtitle = tier === 'direct' && relation
+      ? [RELATION_LABELS[relation], value].filter(Boolean).join(' · ')
+      : value
+
+    const lSprite = makeLabelSprite(n.name, subtitle, {
+      bold: isCore,
+      scale: isCore ? 1.15 : isRelated ? 0.72 : 1,
+      titleColor: isCore ? '#FFFFFF' : isRelated ? 'rgba(226,232,240,0.65)' : '#E2E8F0',
+      subtitleColor: tier === 'direct' && relation
+        ? NODE_COLORS[n.type] || '#94A3B8'
+        : 'rgba(148,163,184,0.8)',
+      // Inside a context the label must stay readable however far the camera
+      // pulled back to frame the neighbourhood.
+      fixedScreenSize: inContext,
+    })
+    if (!inContext) lSprite.position.y = -(r * 2.2 + lSprite.scale.y * 0.7)
     group.add(lSprite)
   }
 
@@ -184,7 +273,10 @@ export default function PlanetaryWeb(props: Props) {
       const k = l.source.key < l.target.key ? `${l.source.key}|${l.target.key}` : `${l.target.key}|${l.source.key}`
       if (seen.has(k)) continue
       seen.add(k)
-      fgLinks.push({ source: l.source.key, target: l.target.key })
+      fgLinks.push({
+        source: l.source.key, target: l.target.key,
+        relation: l.relation, sType: l.source.type, tType: l.target.type,
+      })
     }
 
     return { fgNodes, fgLinks }
@@ -193,28 +285,41 @@ export default function PlanetaryWeb(props: Props) {
   // Precedence: focus isolates its ego network and overrides everything else.
   // Otherwise an insight's highlight wins over selection-neighbourhood
   // highlighting; when both are active the selection is added on top.
-  const highlightSet = useMemo(() => {
+  // Everything visible in the current context, keyed by how prominent it should
+  // be. `null` means no context is active and the whole graph renders normally.
+  const { tierMap, relations } = useMemo((): {
+    tierMap: Map<string, ContextTier> | null
+    relations: Map<string, RelationType>
+  } => {
+    const selCtx = selected ? selectionContext(selected) : null
+
     if (focusNode) {
-      const s = egoNetwork(focusNode, 2)
-      if (selected) s.add(selected.key)
-      return s
-    }
-    if (highlightKeys && highlightKeys.size > 0) {
-      const s = new Set(highlightKeys)
-      if (selected) {
-        s.add(selected.key)
-        for (const nb of selected.neighbors) s.add(nb.key)
+      const m = new Map<string, ContextTier>()
+      for (const k of egoNetwork(focusNode, 2)) m.set(k, 'direct')
+      for (const nb of focusNode.neighbors) m.set(nb.key, 'direct')
+      m.set(focusNode.key, 'core')
+      // Inside focus a selection still reads as the subject.
+      if (selCtx) {
+        for (const [k, t] of selCtx.tiers) if (m.has(k) && t !== 'related') m.set(k, t)
       }
-      return s
+      return { tierMap: m, relations: selCtx?.relations ?? new Map() }
     }
-    if (!selected) return null
-    const s = new Set([selected.key])
-    for (const nb of selected.neighbors) s.add(nb.key)
-    return s
+
+    if (highlightKeys && highlightKeys.size > 0) {
+      const m = new Map<string, ContextTier>()
+      for (const k of highlightKeys) m.set(k, 'direct')
+      if (selCtx) for (const [k, t] of selCtx.tiers) m.set(k, t)
+      return { tierMap: m, relations: selCtx?.relations ?? new Map() }
+    }
+
+    if (!selCtx) return { tierMap: null, relations: new Map() }
+    return { tierMap: selCtx.tiers, relations: selCtx.relations }
   }, [selected, highlightKeys, focusNode])
 
-  const highlightSetRef = useRef(highlightSet)
-  highlightSetRef.current = highlightSet
+  const tierMapRef = useRef(tierMap)
+  tierMapRef.current = tierMap
+  const relationsRef = useRef(relations)
+  relationsRef.current = relations
 
   const expiringSet = useMemo(() => {
     const s = new Set<string>()
@@ -249,24 +354,42 @@ export default function PlanetaryWeb(props: Props) {
         <div style="color:#9CA3AF;font-size:9px;">${n.type} · ${fmtK(n.graphNode.value)}</div>
       </div>`)
       .nodeColor((n: any) => {
-        const hs = highlightSetRef.current
-        if (hs && !hs.has(n.id)) return '#1F2937'
-        return n.color
+        const tm = tierMapRef.current
+        if (!tm) return n.color
+        const tier = tm.get(n.id)
+        if (!tier) return '#1F2937'
+        return tier === 'related' ? rgba(n.color, 0.55) : n.color
       })
       .nodeOpacity(0.92)
       .nodeThreeObjectExtend(true)
-      .nodeThreeObject((n: any) => makeNodeObject(n, selectedRef.current, highlightSetRef.current, expiringSetRef.current))
+      .nodeThreeObject((n: any) => makeNodeObject(
+        n, selectedRef.current, tierMapRef.current, relationsRef.current, expiringSetRef.current
+      ))
       .linkColor((l: any) => {
-        const hs = highlightSetRef.current
-        const sel = selectedRef.current
-        if (!hs) return 'rgba(100,116,139,0.35)'
+        const tm = tierMapRef.current
+        if (!tm) return 'rgba(100,116,139,0.35)'
         const sId = typeof l.source === 'object' ? l.source.id : l.source
         const tId = typeof l.target === 'object' ? l.target.id : l.target
-        if (sel && (sId === sel.key || tId === sel.key)) return '#60A5FA'
-        if (hs.has(sId) && hs.has(tId)) return 'rgba(148,163,184,0.45)'
-        return 'rgba(31,41,55,0.12)'
+        const sTier = tm.get(sId)
+        const tTier = tm.get(tId)
+        if (!sTier || !tTier) return 'rgba(31,41,55,0.12)'
+        // A link takes the colour of the entity it leads to, so a line to an
+        // owner reads green and a line to a category amber — matching the legend.
+        const leadsTo = sTier === 'core' ? l.tType : tTier === 'core' ? l.sType : l.tType
+        const hue = NODE_COLORS[leadsTo] || '#94A3B8'
+        const touchesCore = sTier === 'core' || tTier === 'core'
+        return rgba(hue, touchesCore ? 0.95 : 0.3)
       })
-      .linkWidth(0.5)
+      .linkWidth((l: any) => {
+        const tm = tierMapRef.current
+        if (!tm) return 0.5
+        const sId = typeof l.source === 'object' ? l.source.id : l.source
+        const tId = typeof l.target === 'object' ? l.target.id : l.target
+        const sTier = tm.get(sId)
+        const tTier = tm.get(tId)
+        if (!sTier || !tTier) return 0.5
+        return sTier === 'core' || tTier === 'core' ? 0.9 : 0.45
+      })
       .linkOpacity(0.8)
       .onNodeClick((n: any) => {
         if (!n) return
@@ -282,16 +405,8 @@ export default function PlanetaryWeb(props: Props) {
         }
         lastClickRef.current = { key: gn.key, at: now }
 
-        if (selectedRef.current === gn) {
-          onSelectRef.current(null)
-        } else {
-          onSelectRef.current(gn)
-          graph.cameraPosition(
-            { x: n.x + 50, y: n.y + 25, z: n.z + 50 },
-            { x: n.x, y: n.y, z: n.z },
-            800
-          )
-        }
+        // The selection effect frames the resulting neighbourhood.
+        onSelectRef.current(selectedRef.current === gn ? null : gn)
       })
       .onBackgroundClick(() => {
         onSelectRef.current(null)
@@ -380,7 +495,8 @@ export default function PlanetaryWeb(props: Props) {
     graphRef.current.nodeColor(graphRef.current.nodeColor())
     graphRef.current.nodeThreeObject(graphRef.current.nodeThreeObject())
     graphRef.current.linkColor(graphRef.current.linkColor())
-  }, [highlightSet, selected, expiringSet])
+    graphRef.current.linkWidth(graphRef.current.linkWidth())
+  }, [tierMap, selected, expiringSet])
 
   // Ease the camera onto a focused node's ego network
   useEffect(() => {
@@ -436,18 +552,38 @@ export default function PlanetaryWeb(props: Props) {
     )
   }, [highlightKeys])
 
-  // Search fly-to
+  // Frame a selection's immediate neighbourhood rather than hugging the node,
+  // so the context that was just revealed is actually on screen.
+  useEffect(() => {
+    if (!graphRef.current || !selected || focusNode) return
+    const gd = graphRef.current.graphData()
+    const wanted = new Set<string>([selected.key])
+    for (const nb of selected.neighbors) wanted.add(nb.key)
+    const targets = gd.nodes.filter((n: any) => wanted.has(n.id) && n.x !== undefined)
+    if (targets.length === 0) return
+    let cx = 0, cy = 0, cz = 0
+    for (const n of targets) { cx += n.x; cy += n.y; cz += n.z }
+    cx /= targets.length; cy /= targets.length; cz /= targets.length
+    let maxR = 0
+    for (const n of targets) {
+      const d = Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2 + (n.z - cz) ** 2)
+      if (d > maxR) maxR = d
+    }
+    const dist = Math.min(Math.max(maxR * 1.9, 90), 900)
+    graphRef.current.cameraPosition(
+      { x: cx, y: cy + dist * 0.22, z: cz + dist },
+      { x: cx, y: cy, z: cz },
+      800
+    )
+  }, [selected, focusNode])
+
+  // Search selects the first match; the effect above frames it.
   useEffect(() => {
     if (!graphRef.current || !searchTerm) return
     const gd = graphRef.current.graphData()
     const matched = gd.nodes.find((n: any) => n.name.toLowerCase().includes(searchTerm))
     if (matched && matched.x !== undefined) {
       onSelect(matched.graphNode)
-      graphRef.current.cameraPosition(
-        { x: matched.x + 50, y: matched.y + 25, z: matched.z + 50 },
-        { x: matched.x, y: matched.y, z: matched.z },
-        800
-      )
     }
   }, [searchTerm]) // eslint-disable-line react-hooks/exhaustive-deps
 
