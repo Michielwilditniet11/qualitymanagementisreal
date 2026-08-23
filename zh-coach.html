@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZH Coach — Zero Hour 2v2 Playbook</title>
+<style>
+:root{
+  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2b313d;
+  --txt:#e6e9ef; --dim:#9aa4b5; --acc:#e0a52b; --usa:#4d9de0; --china:#e05555; --gla:#7bbf5a;
+  --good:#5cc46a; --warn:#e0a52b; --bad:#e05555;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 "Segoe UI",Roboto,system-ui,sans-serif}
+header{padding:14px 18px;background:linear-gradient(90deg,#1b1f27,#12151b);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+h1{margin:0;font-size:18px;letter-spacing:.5px}
+h1 span{color:var(--acc)}
+.sub{color:var(--dim);font-size:12px;margin-top:2px}
+.wrap{max-width:1180px;margin:0 auto;padding:16px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{background:var(--panel);color:var(--dim);border:0;padding:8px 14px;cursor:pointer;font-size:13px}
+.seg button.on{background:var(--acc);color:#161616;font-weight:600}
+label.lbl{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.gcard{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:9px 11px;cursor:pointer;transition:.12s}
+.gcard:hover{background:var(--panel2);transform:translateY(-1px)}
+.gcard.on{outline:2px solid var(--acc);background:var(--panel2)}
+.gcard.dis{opacity:.35;cursor:default;transform:none}
+.gcard b{display:block;font-size:13px}
+.gcard small{color:var(--dim);font-size:11px}
+.f-USA{border-left-color:var(--usa)} .f-China{border-left-color:var(--china)} .f-GLA{border-left-color:var(--gla)}
+section.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+section.card h2{margin:0 0 8px;font-size:14px;letter-spacing:.8px;text-transform:uppercase;color:var(--acc)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+ul{margin:6px 0;padding-left:18px} li{margin:3px 0}
+.bo{list-style:none;padding:0;counter-reset:s}
+.bo li{counter-increment:s;padding:5px 8px 5px 34px;position:relative;border-bottom:1px solid var(--line);font-size:14px}
+.bo li:last-child{border:0}
+.bo li:before{content:counter(s);position:absolute;left:8px;top:5px;width:18px;height:18px;border-radius:50%;background:var(--acc);color:#161616;font-size:11px;font-weight:700;text-align:center;line-height:18px}
+.tm{color:var(--acc);font-weight:600;font-size:12px}
+.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;border:1px solid var(--line);background:var(--panel2);margin:2px 4px 2px 0}
+.pill.good{border-color:var(--good);color:var(--good)} .pill.bad{border-color:var(--bad);color:var(--bad)} .pill.warn{border-color:var(--warn);color:var(--warn)}
+.note{background:var(--panel2);border-left:3px solid var(--acc);padding:8px 12px;border-radius:0 6px 6px 0;font-size:13px;margin:8px 0}
+.threat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.threat h4{margin:0 0 4px;font-size:13px}
+.threat h4 .en{color:var(--bad)}
+.empty{color:var(--dim);text-align:center;padding:26px;font-style:italic}
+.hide{display:none}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.tabs button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:7px 13px;border-radius:7px;cursor:pointer;font-size:13px}
+.tabs button.on{background:var(--acc);color:#161616;border-color:var(--acc);font-weight:600}
+.clr{background:none;border:1px solid var(--line);color:var(--dim);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:12px}
+footer{color:var(--dim);font-size:11px;text-align:center;padding:18px}
+@media (max-width:600px){.wrap{padding:10px}.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}}
+</style>
+</head>
+<body>
+<header>
+  <h1>ZH <span>COACH</span> — Zero Hour team playbook</h1>
+  <div class="sub">Pro rules (no superweapons / no gen-power supers, no worker or dozer rush, no base-crawl into spawn). 2v2 &amp; 2v2v2.</div>
+</header>
+
+<div class="wrap">
+
+<div class="bar">
+  <span class="lbl">Mode</span>
+  <div class="seg" id="mode">
+    <button data-m="2v2" class="on">2v2</button>
+    <button data-m="2v2v2">2v2v2</button>
+  </div>
+  <span class="lbl">Map slot</span>
+  <div class="seg" id="slot">
+    <button data-s="front" class="on">Front / exposed</button>
+    <button data-s="back">Back / protected</button>
+  </div>
+  <button class="clr" id="reset">Reset all</button>
+</div>
+
+<section class="card">
+  <h2>1 — Your general</h2>
+  <div class="grid" id="me"></div>
+</section>
+
+<section class="card" id="allySec">
+  <h2>2 — Your ally <small style="text-transform:none;color:var(--dim);letter-spacing:0">(optional — tunes the combo plan)</small></h2>
+  <div class="grid" id="ally"></div>
+</section>
+
+<div id="plan"><div class="empty">Pick your general to load the playbook.</div></div>
+
+<section class="card" id="enemySec">
+  <h2>3 — Enemies (pick as you scout them)</h2>
+  <div class="grid" id="enemy"></div>
+</section>
+
+<div id="counters"></div>
+
+</div>
+<footer>Timings assume 2v2 pro-rules pacing on standard money maps. Adjust ±30s for map size and starting cash.</footer>
+
+<script>
+/* ---------- DATA ---------- */
+const G = {
+ usa:{n:"USA (vanilla)",f:"USA",d:"Balanced, Ranger/Humvee",
+  rush:{t:"3:30–5:00",b:["Supply Center + 2nd Dozer, 2 Chinooks","Barracks → 2 Rangers for scout/capture","War Factory → 3 Humvees, load Missile Defenders","Push with 5 Humvees + Ranger, snipe supply lines","Strategy Center → Bombardment for the follow-up"],k:["Humvee-with-Missile-Defender is your rush and your AA","Never rush without a Chinook drop threat behind it"]},
+  mid:{t:"8–14 min",b:["Airfield: 2 Raptors, upgrade Laser Point Target","Crusaders + Drone Armor, Composite Armor from Strat Center","Paladins on the choke, Humvees roaming","Comanches with Rocket Pods for tech hunting"],k:["Hold Battle Plan: Search & Destroy for pushes, Hold the Line when turtling"]},
+  late:{t:"15 min+",b:["Full Paladin/Microwave ball with Ambulance support","Aurora Bombers on enemy production","Tomahawks behind the tank line","EMP Patriots on the second expansion"],k:["Aurora spam is your win condition once you have 3 airfields"]}},
+
+ laser:{n:"Laser (Townes)",f:"USA",d:"Power-hungry, hard-counter to rockets/air",
+  rush:{t:"4:00–6:00 (defensive early)",b:["Cold Fusion FIRST — everything scales off power","Barracks, 2 Missile Defenders to hold your ramp","2 Laser Crusaders as soon as War Factory is up","Laser Turret at the choke, not in your base"],k:["You are weak before 5 min. Trade map control for power.","Never rush with Laser Crusaders under 4 — they are glass early"]},
+  mid:{t:"8–14 min",b:["3rd + 4th Cold Fusion, Control Rods","Avenger x2 (rocket/air immunity for the whole ball)","Laser Crusader ball + Laser Comanche","Point Defense Drone on everything"],k:["Avenger point-defense shreds Scuds, Tomahawks, rockets, Nukes","One power outage = you lose everything. Keep 2 spare reactors."]},
+  late:{t:"15 min+",b:["Laser Paladin + Avenger + Microwave push","Laser Comanche swarm on production","Laser Turret creep toward their expansions"],k:["Beat everything except mass artillery and stealth — screen both"]}},
+
+ air:{n:"Air Force (Granger)",f:"USA",d:"No War Factory tanks — planes are your army",
+  rush:{t:"4:30–6:00",b:["Supply Center → Airfield immediately","2 Raptors first, hit dozers and supply gatherers","Barracks: Missile Defenders in your own base for defense","3rd–4th Raptor, upgrade Laser Point Target"],k:["Kill their supply gathering, not their units. Starve them.","Your ground is paper — buy time with Patriots + ally screen"]},
+  mid:{t:"7–13 min",b:["Combat Chinook drops of Rangers/Missile Defenders","Comanches with Rocket Pods","2nd + 3rd Airfield, Countermeasures upgrade","Stealth Fighter to delete AA on the way in"],k:["Countermeasures is mandatory vs any China/GLA AA","Always send Stealth Fighter one wave ahead to clear Gattlings/Quads"]},
+  late:{t:"14 min+",b:["Aurora Alpha volleys on Command Centers/production","King Raptor screen","Chinook harass in 3 corners at once"],k:["Aurora Alpha kills a structure per plane. Bank 6 and alpha-strike."]}},
+
+ super:{n:"Superweapon (Alexander)",f:"USA",d:"Under pro rules: no Particle Cannon — play as a turtle/artillery general",
+  rush:{t:"None — defend to 6:00",b:["Cold Fusion, Supply Center, 2 dozers","Patriot Battery pair on the ramp + Missile Defenders inside","War Factory → 2 Crusaders to deny scouting"],k:["PRO RULES: Particle Cannon is off. You are a defensive econ general.","Your value is holding the front so your ally free-farms"]},
+  mid:{t:"9–15 min",b:["EMP Patriots (shuts down every tank push cold)","Tomahawk line behind the Patriots","Advanced Control Rods, 3rd expansion","Firebase with Missile Defenders on the choke"],k:["EMP Patriot + Tomahawk is one of the strongest defensive combos in ZH"]},
+  late:{t:"16 min+",b:["Mass Tomahawk + Paladin escort creep","Aurora on their artillery","Microwave to shut down enemy defenses on the final push"],k:["You do not win by attacking — you win by making them attack you"]}},
+
+ china:{n:"China (vanilla)",f:"China",d:"Tank mass, horde bonus",
+  rush:{t:"4:00–5:30",b:["Supply Center + 2nd Dozer immediately","Barracks → Red Guard pair to hold ramp / capture","War Factory → Gattling Tank first (anti-air + anti-infantry)","4 Battlemasters, get Horde bonus, then push"],k:["Never push with fewer than 4 tanks — Horde bonus is everything","Nuke Shells at ~7 min doubles your damage"]},
+  mid:{t:"8–14 min",b:["Propaganda Center → Nationalism + Nuke Shells","Overlord with Gattling upgrade","Bunker + Gattling on your choke","2nd War Factory, keep 8+ Battlemasters alive"],k:["Overlord + Gattling escort beats almost any pure tank ball"]},
+  late:{t:"15 min+",b:["Overlord/Emperor mix with Speaker Tower Overlords","Inferno Cannons behind the line","Migs with Black Napalm on their eco"],k:["Speaker Tower Overlord heals the whole horde — 2 of them minimum"]}},
+
+ tank:{n:"Tank (Kwai)",f:"China",d:"Cheapest, fastest tanks in the game",
+  rush:{t:"3:30–4:30 — the strongest ground rush in ZH",b:["Supply Center, 2nd Dozer, War Factory ASAP (skip barracks if safe)","4 Battlemasters (discounted) → move out immediately","Add 2 more on the way, keep Horde bonus","Kill dozers and supply trucks first, then the Supply Center"],k:["If your rush lands before their 2nd defensive building, you win outright","Do not stop production while pushing — reinforce in a stream"]},
+  mid:{t:"7–12 min",b:["Nuke Shells + Nationalism","Emperor Overlord (your unique) with Gattling","Gattling Tanks vs Comanche/Raptor","Expand to a 2nd supply while pushing"],k:["Emperor's Speaker Tower heals the ball — never lose it, retreat it early"]},
+  late:{t:"13 min+",b:["Emperor + Battlemaster mass, endless reinforcement","Inferno Cannon siege on defended chokes","Migs to clear artillery"],k:["You out-produce everyone. Never bank money above 3000."]}},
+
+ inf:{n:"Infantry (Shin Fai)",f:"China",d:"Minigunner hordes, Listening Outposts",
+  rush:{t:"3:00–4:30 — earliest rush in the game",b:["Barracks first, Supply Center second","6 Red Guards → move out at 3:00","Add Tank Hunters vs any vehicle opener","Attack-move onto their dozers and workers"],k:["Your Red Guards are free-ish and come with Horde — flood early or fall off","Capture every civilian structure on the way for map control"]},
+  mid:{t:"7–12 min",b:["Propaganda Center → Nationalism, Fanaticism","Minigunner horde + Tank Hunters + Troop Crawlers","Listening Outposts to detect Stealth/Kassad","Helix with Propaganda for healing on the move"],k:["Troop Crawler full of Tank Hunters is your anti-armour answer","Fanaticism-boosted Minigunner horde deletes any infantry general"]},
+  late:{t:"13 min+",b:["Overlord + Minigunner horde combined-arms","Helix bomb drops on production","Inferno Cannons vs turtles"],k:["You lose to mass artillery and flame — never clump vs Toxin/Demo"]}},
+
+ nuke:{n:"Nuke (Tsing Shi Tao)",f:"China",d:"Under pro rules: no Nuclear Missile — play the eco/tank power game",
+  rush:{t:"4:00–5:30",b:["Supply Center + 2nd Dozer","War Factory → Battlemasters (Nuke Shells come free at Prop Center)","Isotope Stability early — your tanks explode on death, use it offensively","Push at 5 with 5 Battlemasters"],k:["PRO RULES: Nuke missile off. Your edge is free Nuke Shells + Nuke Reactors."]},
+  mid:{t:"8–14 min",b:["Nuke Reactors for cheap power (careful — they blow up)","Overlord with Nuke Cannons behind","Nuke Migs for eco denial"],k:["Nuke Cannon out-ranges nearly all base defenses — siege with it"]},
+  late:{t:"15 min+",b:["Mass Nuke Cannon + Overlord screen","Nuke Migs to clear AA","Battlemaster wall in front, cannons behind"],k:["Your tank deaths damage the enemy — trade aggressively"]}},
+
+ gla:{n:"GLA (vanilla)",f:"GLA",d:"Cheap, fast, tunnels, salvage",
+  rush:{t:"3:30–5:00",b:["Supply Stash + 2nd worker, capture nearest oil/civ","Barracks → 3 Rebels, then 2 RPG Troopers","Tunnel Network toward their base — this is your rush enabler","Arms Dealer → 3 Technicals/Scorpions, push with tunnel reinforcement"],k:["Tunnel forward first. Your reinforcements teleport; theirs walk.","Salvage crates upgrade your units for free — always finish the kill"]},
+  mid:{t:"8–13 min",b:["Black Market → Arm the Mob, AP Rockets","Quad Cannons vs air (mandatory vs Air Force/Comanche)","Scorpion mass with Scorpion Rocket upgrade","Stinger Sites at your choke"],k:["Quad Cannons are your only real AA — build them before you need them"]},
+  late:{t:"14 min+",b:["Marauder mass with salvage upgrades","SCUD Launchers behind the line","Bomb Truck sneaks on Command Centers/production","Sneak Attack tunnel behind their base"],k:["Sneak Attack + Bomb Trucks decides late games — save one for their eco"]}},
+
+ toxin:{n:"Toxin (Dr. Thrax)",f:"GLA",d:"Area denial, anti-infantry supremacy",
+  rush:{t:"4:00–5:30",b:["Supply Stash, 2nd worker, capture oils","Barracks → Toxin Rebels (free upgrade) x4","Tunnel forward","Toxin Tractor at ~5:00 — it deletes infantry and denies ground"],k:["Auto Anthrax Beta is free for you. Rebels hard-counter Rangers/Red Guards.","Toxin Tractor on a choke stops infantry generals cold"]},
+  mid:{t:"8–13 min",b:["Anthrax Beta upgrade, Arm the Mob","Toxin Tractors + Scorpions with Toxin Shells","Quad Cannons for AA","Toxin Tunnels / Stinger at chokes"],k:["Never trade toxin vs armour alone — you need Scorpions/RPGs for tanks"]},
+  late:{t:"14 min+",b:["Toxin SCUD Launchers (anthrax warheads) on their army","Marauders with salvage","Anthrax Gamma once available"],k:["Toxin SCUDs area-deny an entire push. 3 of them holds a lane."]}},
+
+ demo:{n:"Demolition (Juhziz)",f:"GLA",d:"Explosives, Demo Traps, suicide units",
+  rush:{t:"3:30–5:00",b:["Supply Stash + 2nd worker","Barracks → Rebels with free Demo bonus","Demo Traps on their ramp and supply route (cheap, invisible)","Tunnel forward, Technicals with demo charges"],k:["Demo Traps on their supply path is free damage all game","Your workers carry explosives — even harass trades favour you"]},
+  mid:{t:"8–13 min",b:["Black Market → AP Rockets, Arm the Mob","Combat Bikes (suicide) + Scorpions","Demo Traps ringing your own base — they beat any rush","Quad Cannons for AA"],k:["A ring of Demo Traps around your base beats every tank rush in the game"]},
+  late:{t:"14 min+",b:["Demo SCUDs + Marauders","Bomb Trucks (yours are strongest) with high-explosive upgrade","Sneak Attack + Bomb Truck alpha on their CC"],k:["2 upgraded Bomb Trucks kill any structure. Send 4, expect 2 to arrive."]}},
+
+ stealth:{n:"Stealth (Prince Kassad)",f:"GLA",d:"Everything cloaks. Information warfare.",
+  rush:{t:"4:00–6:00 (harass, not rush)",b:["Supply Stash, 2nd worker, capture oils","Barracks → Rebels with Camo Netting (free)","Tunnel toward their base — your tunnels are stealthed","Jarmen Kell at ~6:00: snipe dozers, steal a tank"],k:["Jarmen Kell sniping dozers/workers is a game-winning tempo tool","You lose to detection — scout for Listening Outposts/Pathfinders first"]},
+  mid:{t:"8–14 min",b:["Camo Netting on all vehicles, Booby Traps","Stealth Scorpions/Technicals ambush on their reinforcement path","Hijackers on their tank line","Quad Cannons at home for AA"],k:["Ambush from the flank, never head-on. Your units are stat-weak."]},
+  late:{t:"14 min+",b:["Stealth SCUD Launchers (invisible artillery)","Sneak Attack tunnel into their eco with Marauders","Jarmen Kell clearing garrisons and crews"],k:["Invisible SCUDs are your win condition — keep them repositioning"]}}
+};
+
+/* enemy -> your counters, keyed loosely so any general benefits */
+const C = {
+ usa:{th:"Humvee/Missile Defender push, then Paladin + Aurora.",
+  early:["Any AA before 5 min — Chinook drops come early","Kill Humvees before they unload, MDs inside are the damage"],
+  mid:["Anti-air on your supply lines — Comanches hunt gatherers","Their Strategy Center gives them buffs; kill the dozer that builds it"],
+  late:["Aurora Bombers cannot be stopped once launched — spread production","EMP/Microwave shuts your defenses; keep mobile units, not just turrets"]},
+ laser:{th:"Turtles to power, then an unkillable Laser + Avenger ball.",
+  early:["RUSH THEM. Before 5:00 they have nothing. This is the whole matchup.","Kill Cold Fusion Reactors — no power = dead lasers and turrets"],
+  mid:["Do NOT send rockets, Scuds, Tomahawks or Migs into Avengers","Use raw armour, artillery, or mass cheap units instead"],
+  late:["Artillery out-ranges Laser Turrets — Inferno/Nuke Cannon/SCUD","Stealth works: they have limited detection outside base"]},
+ air:{th:"Raptor eco snipes, then Aurora alpha-strikes.",
+  early:["AA in the first 5 minutes or you lose your dozers/workers","Gattling Tank / Quad Cannon / Missile Defender — build 2, not 1"],
+  mid:["They have NO tanks. Any ground push kills them if it reaches the base.","Attack constantly — a defending Air Force general is a losing one"],
+  late:["Spread structures — Aurora one-shots buildings","Kill their airfields with a ground rush, not with your own air"]},
+ super:{th:"Turtle + EMP Patriot + Tomahawk. (Supers off under pro rules.)",
+  early:["Deny expansions — their whole plan is safe income","Rush early: they build defense before army"],
+  mid:["EMP Patriot disables tanks — send infantry or artillery, not a tank ball","Out-range Patriots with artillery instead of walking into them"],
+  late:["Never attack into the front. Go around, hit expansions and power.","Kill Tomahawk trucks with fast flankers — they are unarmoured"]},
+ china:{th:"Battlemaster horde, then Overlords.",
+  early:["Don't fight the horde head-on under 6 tanks of your own","Rocket infantry in a garrison beats early Battlemasters"],
+  mid:["Kill Speaker Tower Overlords first — they heal everything","Gattling Tanks mean your air needs escorts or numbers"],
+  late:["Overlord ball needs artillery or massed AT — not equal tanks","Their Migs with Black Napalm delete clumped units — spread"]},
+ tank:{th:"THE fastest rush in ZH — 4 Battlemasters at ~4:00.",
+  early:["Assume the rush is coming. Defense by 4:00 or you are dead.","Rocket infantry in a garrison/bunker, or 2 AT units + a wall of anything","Do NOT be greedy on a second expansion before 5:00"],
+  mid:["They out-produce you — fight at your defenses, not theirs","Snipe the Emperor Overlord, it heals the whole horde"],
+  late:["Artillery and air, never tank-vs-tank. You lose that trade by design.","Cut their supply — they can only spend fast if they earn fast"]},
+ inf:{th:"Red Guard flood as early as 3:00, then Minigunner hordes.",
+  early:["Garrison a building or get a bunker/Firebase up by 3:30","Anything with splash: Technicals, Toxin Rebels, flame, Gattling"],
+  mid:["Their Troop Crawlers carry Tank Hunters — kill the crawler first","Fanaticism-boosted hordes beat equal infantry; use splash instead"],
+  late:["Artillery and flame delete hordes. Never fight infantry with infantry.","Listening Outposts mean stealth won't save you"]},
+ nuke:{th:"Free Nuke Shells + Nuke Cannon siege. (Nuke missile off, pro rules.)",
+  early:["Their tanks hit harder than normal China — don't trade evenly","Nuke Reactors explode: kill one and take out half their base power"],
+  mid:["Nuke Cannons out-range everything static — you must go kill them","Fast flankers on the cannons; they are helpless without escort"],
+  late:["Their dying tanks damage yours — engage spread out, never clumped","Take the fight to open ground, away from their cannon line"]},
+ gla:{th:"Tunnels, cheap swarms, salvage snowball, Bomb Trucks.",
+  early:["Find and kill the forward Tunnel Network — it is their whole rush","Scout wide at 3:30; a tunnel near you means a rush is 60s away"],
+  mid:["Deny salvage: don't leave your own wrecks near their army","Detection matters — Bomb Trucks and hijackers walk into undefended bases"],
+  late:["Guard your Command Center and production against Sneak Attack","Kill SCUD Launchers with air — they have thin AA outside Quads"]},
+ toxin:{th:"Toxin Rebels + Tractors deny ground; Toxin SCUDs late.",
+  early:["Do NOT lead with infantry — anything toxin deletes it","Vehicles and armour only until you have splash of your own"],
+  mid:["Toxin Tractors are unarmoured — snipe them with anything ranged","Their AT is thin; a tank ball with AA support runs them over"],
+  late:["Never clump into anthrax fields; move around, not through","Air units are immune to ground toxin — use them"]},
+ demo:{th:"Demo Traps everywhere, suicide bikes, Bomb Trucks.",
+  early:["Scout your OWN ramp and supply route for Demo Traps before moving out","Never attack-move a tank ball down an unscouted road"],
+  mid:["Detection or ranged clearing before every push","Kill Combat Bikes at range — never let them touch your ball"],
+  late:["Bomb Trucks: keep AA/AT near your CC, power and production","Spread your army — one truck should never kill three tanks"]},
+ stealth:{th:"Invisible everything. Jarmen Kell snipes your dozers.",
+  early:["Detection IMMEDIATELY: Listening Outpost, Pathfinder, Humvee scan, radar","Keep dozers/workers clustered inside base — Kell hunts them"],
+  mid:["Their units are individually weak — the moment you see them, you win the fight","Sweep your expansions; stealth tunnels appear where you aren't looking"],
+  late:["Stealth SCUDs are invisible artillery — spread detection across the map","Guard your Command Center against Sneak Attack tunnels"]}
+};
+
+const COMBO = {
+ "USA+China":"USA gives air + Avenger/Patriot cover, China gives the tank wall. Let China lead every push and follow with air.",
+ "USA+GLA":"Fastest tempo pair: GLA tunnels forward and harasses from minute 3 while USA techs to air. GLA must survive the early game alone.",
+ "USA+USA":"Double air is very strong but fragile on the ground. One of you MUST build ground defense and hold the front.",
+ "China+China":"Just mass. Attack together at 6:00 with two hordes — few teams survive a double Battlemaster push.",
+ "China+GLA":"China walls, GLA flanks and tunnels. GLA takes the map, China takes the middle.",
+ "GLA+GLA":"Both fragile to air — build Quad Cannons early on BOTH sides. Win by 12 minutes or you fall off."
+};
+
+const ORDER=["usa","laser","air","super","china","tank","inf","nuke","gla","toxin","demo","stealth"];
+
+/* ---------- STATE ---------- */
+const S={mode:"2v2",slot:"front",me:null,ally:null,enemies:[]};
+const maxE=()=>S.mode==="2v2"?2:4;
+
+/* ---------- RENDER ---------- */
+function card(k,sel,dis){const g=G[k];
+ return `<div class="gcard f-${g.f}${sel?" on":""}${dis?" dis":""}" data-k="${k}"><b>${g.n}</b><small>${g.d}</small></div>`;}
+
+function paintPickers(){
+ me.innerHTML=ORDER.map(k=>card(k,S.me===k)).join("");
+ ally.innerHTML=ORDER.map(k=>card(k,S.ally===k)).join("");
+ enemy.innerHTML=ORDER.map(k=>card(k,S.enemies.includes(k),!S.enemies.includes(k)&&S.enemies.length>=maxE())).join("");
+}
+
+function li(a){return a.map(x=>`<li>${x}</li>`).join("")}
+
+function paintPlan(){
+ if(!S.me){plan.innerHTML='<div class="empty">Pick your general to load the playbook.</div>';return;}
+ const g=G[S.me];
+ const slotNote=S.slot==="front"
+  ? "FRONT SLOT: you are the wall. Build your first defensive structure before your second expansion, and expect the enemy rush to come at you first."
+  : "BACK SLOT: you are the economy and the tech. Take the second supply early, build the expensive units, and reinforce your ally's front — do not build a full defensive line you'll never need.";
+ const modeNote=S.mode==="2v2v2"
+  ? "2v2v2: never commit your whole army — the third team punishes whoever spends first. Let the other two teams open the fighting, then hit the weakened winner. Keep 30% of your army home at all times."
+  : "2v2: tempo game. Attack the same enemy your ally attacks, at the same time. Two split pushes lose to one focused one.";
+ let combo="";
+ if(S.ally){const p=[G[S.me].f,G[S.ally].f].sort().join("+");combo=`<div class="note"><b>Team combo — ${G[S.me].n} + ${G[S.ally].n}:</b> ${COMBO[p]}</div>`;}
+ plan.innerHTML=`
+ <section class="card">
+  <h2>Playbook — ${g.n}</h2>
+  <div class="note">${modeNote}</div>
+  <div class="note">${slotNote}</div>
+  ${combo}
+  <div class="cols">
+   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">RUSH / OPENING <span class="tm">${g.rush.t}</span></h3>
+     <ol class="bo">${li(g.rush.b)}</ol><ul>${li(g.rush.k)}</ul></div>
+   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">MID GAME <span class="tm">${g.mid.t}</span></h3>
+     <ol class="bo">${li(g.mid.b)}</ol><ul>${li(g.mid.k)}</ul></div>
+   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">LATE GAME <span class="tm">${g.late.t}</span></h3>
+     <ol class="bo">${li(g.late.b)}</ol><ul>${li(g.late.k)}</ul></div>
+  </div>
+ </section>`;
+}
+
+function paintCounters(){
+ if(!S.enemies.length){counters.innerHTML='<div class="empty">Pick enemy generals as you scout them for counter-play.</div>';return;}
+ const blocks=S.enemies.map(k=>{const g=G[k],c=C[k];
+  return `<div class="threat">
+   <h4><span class="en">${g.n}</span> — ${c.th}</h4>
+   <div class="cols">
+    <div><b style="font-size:12px;color:var(--dim)">EARLY</b><ul>${li(c.early)}</ul></div>
+    <div><b style="font-size:12px;color:var(--dim)">MID</b><ul>${li(c.mid)}</ul></div>
+    <div><b style="font-size:12px;color:var(--dim)">LATE</b><ul>${li(c.late)}</ul></div>
+   </div></div>`;}).join("");
+
+ // priority read
+ const has=x=>S.enemies.includes(x);
+ const p=[];
+ if(has("tank")||has("inf"))p.push(['bad','RUSH INCOMING — have real defense up by 4:00. Do not double-expand.']);
+ if(has("air"))p.push(['bad','AA before 5:00 or you lose your dozers/workers to Raptors.']);
+ if(has("stealth")||has("demo"))p.push(['warn','Get detection early and scout your own ground before moving out.']);
+ if(has("laser"))p.push(['warn','Rush the Laser general early; later, never send rockets/Scuds into Avengers.']);
+ if(has("super")||has("nuke"))p.push(['warn','They out-range you. Flank, expand, and deny income instead of pushing the front.']);
+ if(has("toxin"))p.push(['warn','Lead with vehicles, not infantry.']);
+ if(!p.length)p.push(['good','No hard early threat. Take the map and expand — you can afford the greedier build.']);
+
+ counters.innerHTML=`<section class="card"><h2>Counter-play vs scouted enemies</h2>
+  <div>${p.map(x=>`<span class="pill ${x[0]}">${x[1]}</span>`).join("")}</div>
+  <div style="margin-top:10px">${blocks}</div></section>`;
+}
+
+function paintAll(){paintPickers();paintPlan();paintCounters();}
+
+/* ---------- EVENTS ---------- */
+me.onclick=e=>{const c=e.target.closest(".gcard");if(!c)return;S.me=S.me===c.dataset.k?null:c.dataset.k;paintAll();};
+ally.onclick=e=>{const c=e.target.closest(".gcard");if(!c)return;S.ally=S.ally===c.dataset.k?null:c.dataset.k;paintAll();};
+enemy.onclick=e=>{const c=e.target.closest(".gcard");if(!c||c.classList.contains("dis"))return;
+ const k=c.dataset.k,i=S.enemies.indexOf(k);
+ i>=0?S.enemies.splice(i,1):S.enemies.push(k);paintAll();};
+mode.onclick=e=>{if(e.target.tagName!=="BUTTON")return;
+ S.mode=e.target.dataset.m;[...mode.children].forEach(b=>b.classList.toggle("on",b===e.target));
+ S.enemies=S.enemies.slice(0,maxE());paintAll();};
+slot.onclick=e=>{if(e.target.tagName!=="BUTTON")return;
+ S.slot=e.target.dataset.s;[...slot.children].forEach(b=>b.classList.toggle("on",b===e.target));paintAll();};
+reset.onclick=()=>{S.me=S.ally=null;S.enemies=[];paintAll();};
+
+paintAll();
+</script>
+</body>
+</html>
