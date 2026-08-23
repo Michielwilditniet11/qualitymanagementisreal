@@ -1,4 +1,5 @@
 import type { Contract } from '../data/types'
+import { noticeDeadline, isSilentRenewal } from './terms'
 
 export type WindowPreset = 'next12' | 'next90' | 'overdue' | 'all'
 
@@ -112,12 +113,12 @@ export function timelineRows(contracts: Contract[], win: TimeWindow, now = new D
 
     let noticeStartPct: number | undefined
     let noticeDate: Date | undefined
-    let silentRenewalRisk = false
-    if (c.noticePeriodDays && c.noticePeriodDays > 0) {
-      noticeDate = new Date(endT - c.noticePeriodDays * DAY)
-      noticeStartPct = clamp(pctOf(noticeDate.getTime(), win))
-      silentRenewalRisk = Boolean(c.autoRenew) && noticeDate.getTime() < now.getTime() && !overdue
+    const deadline = noticeDeadline(c)
+    if (deadline) {
+      noticeDate = deadline
+      noticeStartPct = clamp(pctOf(deadline.getTime(), win))
     }
+    const silentRenewalRisk = isSilentRenewal(c, now)
 
     rows.push({
       contract: c,
