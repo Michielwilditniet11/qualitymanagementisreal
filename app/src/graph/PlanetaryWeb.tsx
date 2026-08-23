@@ -18,6 +18,8 @@ interface Props {
   spendThreshold: number
   highlightExpiring: number
   lens: LensId
+  /** Nodes pinned by an insight; everything else dims. */
+  highlightKeys?: Set<string> | null
 }
 
 /* ─── Constants ─── */
@@ -132,7 +134,7 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
 
 /* ─── Exported wrapper ─── */
 export default function PlanetaryWeb(props: Props) {
-  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, lens } = props
+  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, lens, highlightKeys } = props
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<any>(null)
   const selectedRef = useRef(selected)
@@ -181,12 +183,22 @@ export default function PlanetaryWeb(props: Props) {
     return { fgNodes, fgLinks }
   }, [nodes, links, visibleTypes, spendThreshold, maxValue])
 
+  // An insight's highlight wins over selection-neighbourhood highlighting; when
+  // both are active the selected node and its neighbours are added on top.
   const highlightSet = useMemo(() => {
+    if (highlightKeys && highlightKeys.size > 0) {
+      const s = new Set(highlightKeys)
+      if (selected) {
+        s.add(selected.key)
+        for (const nb of selected.neighbors) s.add(nb.key)
+      }
+      return s
+    }
     if (!selected) return null
     const s = new Set([selected.key])
     for (const nb of selected.neighbors) s.add(nb.key)
     return s
-  }, [selected])
+  }, [selected, highlightKeys])
 
   const highlightSetRef = useRef(highlightSet)
   highlightSetRef.current = highlightSet
@@ -238,6 +250,7 @@ export default function PlanetaryWeb(props: Props) {
         const sId = typeof l.source === 'object' ? l.source.id : l.source
         const tId = typeof l.target === 'object' ? l.target.id : l.target
         if (sel && (sId === sel.key || tId === sel.key)) return '#60A5FA'
+        if (hs.has(sId) && hs.has(tId)) return 'rgba(148,163,184,0.45)'
         return 'rgba(31,41,55,0.12)'
       })
       .linkWidth(0.5)
@@ -268,7 +281,7 @@ export default function PlanetaryWeb(props: Props) {
 
     // Better lighting
     const scene = graph.scene()
-    scene.fog = new THREE.Fog(BG, 300, 700)
+    scene.fog = new THREE.Fog(BG, 600, 2200)
     const existing = scene.children.filter((c: any) => c.isLight)
     existing.forEach((l: any) => scene.remove(l))
     scene.add(new THREE.AmbientLight('#E5E7EB', 0.4))
@@ -307,7 +320,7 @@ export default function PlanetaryWeb(props: Props) {
         const d = Math.sqrt(((n.x||0) - cx) ** 2 + ((n.y||0) - cy) ** 2 + ((n.z||0) - cz) ** 2)
         if (d > maxR) maxR = d
       }
-      const dist = Math.max(maxR * 2.5, 150)
+      const dist = Math.min(Math.max(maxR * 2.5, 150), 900)
       graphRef.current?.cameraPosition(
         { x: cx, y: cy + dist * 0.3, z: cz + dist },
         { x: cx, y: cy, z: cz },
@@ -341,6 +354,29 @@ export default function PlanetaryWeb(props: Props) {
     graphRef.current.nodeThreeObject(graphRef.current.nodeThreeObject())
     graphRef.current.linkColor(graphRef.current.linkColor())
   }, [highlightSet, selected, expiringSet])
+
+  // Frame the nodes an insight points at
+  useEffect(() => {
+    if (!graphRef.current || !highlightKeys || highlightKeys.size === 0) return
+    const gd = graphRef.current.graphData()
+    const targets = gd.nodes.filter((n: any) => highlightKeys.has(n.id) && n.x !== undefined)
+    if (targets.length === 0) return
+    let cx = 0, cy = 0, cz = 0
+    for (const n of targets) { cx += n.x; cy += n.y; cz += n.z }
+    cx /= targets.length; cy /= targets.length; cz /= targets.length
+    let maxR = 0
+    for (const n of targets) {
+      const d = Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2 + (n.z - cz) ** 2)
+      if (d > maxR) maxR = d
+    }
+    // Keep the framing inside the fog range, or the subject fades to background.
+    const dist = Math.min(Math.max(maxR * 2.2, 120), 900)
+    graphRef.current.cameraPosition(
+      { x: cx, y: cy + dist * 0.25, z: cz + dist },
+      { x: cx, y: cy, z: cz },
+      900
+    )
+  }, [highlightKeys])
 
   // Search fly-to
   useEffect(() => {
@@ -392,8 +428,9 @@ export default function PlanetaryWeb(props: Props) {
   )
 
   return (
-    <div className="flex-1 relative overflow-hidden" style={{ background: BG }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+    <div className="flex-1 relative overflow-hidden min-w-0" style={{ background: BG }}>
+      {/* Absolute so the renderer's own pixel width never feeds back into the flex layout. */}
+      <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
 
       {/* ─── HUD: Top-right risk summary ─── */}
       <div className="absolute top-3 right-3 rounded-lg p-3"

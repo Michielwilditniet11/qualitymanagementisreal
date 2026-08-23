@@ -4,7 +4,9 @@ import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
 import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff } from '../../graph/PlanetaryWeb'
 import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight } from 'lucide-react'
 import type { GraphNode } from '../../data/types'
-import { LENSES, type LensId } from '../../analytics/lenses'
+import { LENSES, lensForCategory, type LensId } from '../../analytics/lenses'
+import { generateInsights, totalValueAtRisk, type Insight } from '../../analytics/insights'
+import { computeCentrality, assessImpact } from '../../analytics/centrality'
 
 export default function WebScreen() {
   const contracts = useDataStore(s => s.getContracts())
@@ -16,8 +18,23 @@ export default function WebScreen() {
   const [spendThreshold, setSpendThreshold] = useState(0)
   const [highlightExpiring, setHighlightExpiring] = useState(0)
   const [lens, setLens] = useState<LensId>('structure')
+  const [activeInsight, setActiveInsight] = useState<Insight | null>(null)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
+  const insights = useMemo(() => generateInsights(contracts), [contracts])
+
+  const highlightKeys = useMemo(() => {
+    if (!activeInsight) return null
+    const known = new Set(nodes.map(n => n.key))
+    return new Set(activeInsight.nodeKeys.filter(k => known.has(k)))
+  }, [activeInsight, nodes])
+
+  const openInsight = (i: Insight) => {
+    if (activeInsight?.id === i.id) { setActiveInsight(null); return }
+    setActiveInsight(i)
+    setLens(lensForCategory(i.category))
+    setSelected(null)
+  }
 
   const toggleType = (t: string) => {
     setVisibleTypes(v => {
@@ -42,11 +59,11 @@ export default function WebScreen() {
   return (
     <div className="flex-1 flex min-h-0">
       {/* Canvas area */}
-      <div className="flex-1 flex flex-col min-h-0" onClick={handleLegendChange as any}>
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden" onClick={handleLegendChange as any}>
         {/* Lens selector */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ background: '#080C14', borderColor: '#1E293B' }}>
+        <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap" style={{ background: '#080C14', borderColor: '#1E293B' }}>
           <span className="text-[9px] font-semibold tracking-wider mr-1" style={{ color: '#475569' }}>LENS</span>
-          <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #1E293B' }}>
+          <div className="flex rounded-lg overflow-hidden flex-shrink-0" style={{ border: '1px solid #1E293B' }}>
             {LENSES.map(l => (
               <button
                 key={l.id}
@@ -68,7 +85,7 @@ export default function WebScreen() {
         </div>
 
         {/* Search & controls bar */}
-        <div className="flex items-center gap-3 px-4 py-2 border-b" style={{ background: '#0A0F1A', borderColor: '#1E293B' }}>
+        <div className="flex items-center gap-3 px-4 py-2 border-b flex-wrap" style={{ background: '#0A0F1A', borderColor: '#1E293B' }}>
           <input
             type="text" placeholder="Search nodes…"
             value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
@@ -103,13 +120,19 @@ export default function WebScreen() {
           spendThreshold={spendThreshold}
           highlightExpiring={highlightExpiring}
           lens={lens}
+          highlightKeys={highlightKeys}
         />
       </div>
 
       {/* ─── Right-side inspection drawer ─── */}
-      <div className="w-80 border-l overflow-y-auto" style={{ background: '#060A14', borderColor: '#1E293B' }}>
+      <div className="w-80 flex-shrink-0 border-l overflow-y-auto overflow-x-hidden" style={{ background: '#060A14', borderColor: '#1E293B' }}>
         {!selected ? (
-          <EmptyState nodes={nodes} links={links} contracts={contracts} />
+          <InsightsPanel
+            nodes={nodes} links={links} contracts={contracts}
+            insights={insights} active={activeInsight}
+            onOpen={openInsight} onClear={() => setActiveInsight(null)}
+            onSelectNode={setSelected}
+          />
         ) : selected.type === 'contract' && selected.contract ? (
           <ContractDetail node={selected} onNavigate={navigateTo} />
         ) : (
@@ -120,16 +143,153 @@ export default function WebScreen() {
   )
 }
 
-function EmptyState({ nodes, links, contracts }: { nodes: GraphNode[]; links: { source: GraphNode; target: GraphNode }[]; contracts: any[] }) {
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: '#DC2626', warning: '#D97706', info: '#0EA5E9',
+}
+
+function InsightsPanel({ nodes, links, contracts, insights, active, onOpen, onClear, onSelectNode }: {
+  nodes: GraphNode[]
+  links: { source: GraphNode; target: GraphNode }[]
+  contracts: any[]
+  insights: Insight[]
+  active: Insight | null
+  onOpen: (i: Insight) => void
+  onClear: () => void
+  onSelectNode: (n: GraphNode) => void
+}) {
   const totalSpend = contracts.reduce((s: number, c: any) => s + (c.annualValue ?? 0), 0)
+  const atRisk = useMemo(() => totalValueAtRisk(insights), [insights])
+
+  const topSuppliers = useMemo(() => computeCentrality(nodes, 'supplier').slice(0, 5), [nodes])
+  const topOwners = useMemo(() => computeCentrality(nodes, 'owner').slice(0, 5), [nodes])
+
+  const counts = useMemo(() => ({
+    critical: insights.filter(i => i.severity === 'critical').length,
+    warning: insights.filter(i => i.severity === 'warning').length,
+    info: insights.filter(i => i.severity === 'info').length,
+  }), [insights])
+
   return (
     <div className="p-4">
-      <h2 className="font-semibold text-sm mb-1 text-white">Network Overview</h2>
-      <p className="text-xs mb-4" style={{ color: '#64748B' }}>Click any node to inspect its connections, spend, and risk profile.</p>
-      <div className="space-y-2">
+      <h2 className="font-semibold text-sm mb-1 text-white">What needs attention</h2>
+      <p className="text-xs mb-3" style={{ color: '#64748B' }}>
+        {insights.length === 0
+          ? 'No material findings in this portfolio.'
+          : 'Click a finding to highlight it in the web.'}
+      </p>
+
+      <div className="space-y-2 mb-4">
+        <StatRow icon={<DollarSign size={13} />} label="Total spend" value={fmtK(totalSpend)} />
+        <StatRow icon={<AlertTriangle size={13} />} label="Value at risk" value={fmtK(atRisk)} />
         <StatRow icon={<FileText size={13} />} label="Nodes" value={String(nodes.length)} />
         <StatRow icon={<ChevronRight size={13} />} label="Connections" value={String(links.length)} />
-        <StatRow icon={<DollarSign size={13} />} label="Total spend" value={fmtK(totalSpend)} />
+      </div>
+
+      {active && (
+        <button onClick={onClear}
+          className="w-full mb-3 text-[10px] py-1.5 rounded-lg cursor-pointer transition-colors hover:text-white"
+          style={{ background: '#0F172A', border: '1px solid #1E293B', color: '#94A3B8' }}>
+          Clear highlight
+        </button>
+      )}
+
+      {insights.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>Findings</div>
+            <div className="flex gap-1.5">
+              {(['critical', 'warning', 'info'] as const).map(s => counts[s] > 0 && (
+                <span key={s} className="text-[9px] px-1.5 rounded-full font-semibold"
+                  style={{ background: `${SEVERITY_COLORS[s]}18`, color: SEVERITY_COLORS[s] }}>
+                  {counts[s]}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-1.5 mb-4">
+            {insights.map(i => {
+              const color = SEVERITY_COLORS[i.severity]
+              const isActive = active?.id === i.id
+              return (
+                <button key={i.id} onClick={() => onOpen(i)}
+                  className="w-full text-left rounded-lg p-2.5 cursor-pointer transition-colors"
+                  style={{
+                    background: isActive ? '#0F172A' : '#0A0F1A',
+                    border: `1px solid ${isActive ? color : '#1E293B'}`,
+                  }}>
+                  <div className="flex items-start gap-2">
+                    <div style={{
+                      width: '6px', height: '6px', borderRadius: i.severity === 'critical' ? '1px' : '50%',
+                      background: color, flexShrink: 0, marginTop: '4px',
+                    }} />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[11px] font-medium text-white leading-snug">{i.title}</div>
+                      <div className="text-[10px] mt-1 leading-relaxed" style={{ color: '#94A3B8' }}>{i.narrative}</div>
+                      {i.valueAtRisk !== undefined && (
+                        <span className="inline-block text-[9px] mt-1.5 px-1.5 py-0.5 rounded font-semibold tabular-nums"
+                          style={{ background: `${color}15`, color }}>
+                          {fmtK(i.valueAtRisk)}
+                        </span>
+                      )}
+                      {isActive && i.action && (
+                        <div className="text-[9px] mt-1.5 pt-1.5 italic" style={{ color: '#64748B', borderTop: '1px solid #1E293B' }}>
+                          {i.action}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </>
+      )}
+
+      <StakeholderCard title="Key suppliers" icon={<Building2 size={11} />}
+        rows={topSuppliers} nodes={nodes} onSelectNode={onSelectNode} />
+      <StakeholderCard title="Contract owners" icon={<User size={11} />}
+        rows={topOwners} nodes={nodes} onSelectNode={onSelectNode} />
+    </div>
+  )
+}
+
+function StakeholderCard({ title, icon, rows, nodes, onSelectNode }: {
+  title: string
+  icon: React.ReactNode
+  rows: { key: string; name: string; weightedDegree: number; departmentReach: number; systemicScore: number }[]
+  nodes: GraphNode[]
+  onSelectNode: (n: GraphNode) => void
+}) {
+  if (rows.length === 0) return null
+  const totalSpend = nodes.filter(n => n.type === 'contract').reduce((s, n) => s + (n.contract?.annualValue ?? 0), 0)
+  return (
+    <div className="mb-3">
+      <div className="flex items-center gap-1.5 mb-1.5">
+        <span style={{ color: '#475569' }}>{icon}</span>
+        <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>{title}</div>
+      </div>
+      <div className="space-y-1">
+        {rows.map(r => {
+          const node = nodes.find(n => n.key === r.key)
+          const impact = node ? assessImpact(node, totalSpend) : null
+          return (
+            <button key={r.key} onClick={() => node && onSelectNode(node)}
+              className="w-full text-left rounded-lg p-2 cursor-pointer hover:border-[#334155] transition-colors"
+              style={{ background: '#0A0F1A', border: '1px solid #1E293B' }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-medium text-white truncate">{r.name}</span>
+                <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: '#38BDF8' }}>
+                  {fmtK(r.weightedDegree)}
+                </span>
+              </div>
+              <div className="text-[9px] mt-0.5" style={{ color: '#64748B' }}>
+                {impact ? `${impact.contractCount} contract${impact.contractCount === 1 ? '' : 's'} · ` : ''}
+                {r.departmentReach} dept{r.departmentReach === 1 ? '' : 's'}
+              </div>
+            </button>
+          )
+        })}
       </div>
     </div>
   )
