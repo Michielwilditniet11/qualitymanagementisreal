@@ -416,11 +416,6 @@ export default function PlanetaryWeb(props: Props) {
       .d3AlphaDecay(0.02)
       .cooldownTime(5000)
 
-    // Grid floor
-    const gridHelper = new THREE.GridHelper(400, 40, '#1F2937', '#111827')
-    gridHelper.position.y = -80
-    graph.scene().add(gridHelper)
-
     // Better lighting
     const scene = graph.scene()
     scene.fog = new THREE.Fog(BG, 600, 2200)

@@ -407,10 +407,10 @@ function ContractDetail({ node, onNavigate }: { node: GraphNode; onNavigate: (ty
       </div>
 
       <div className="space-y-1.5 mb-3">
-        <ChipLink icon={<Building2 size={11} />} label="Supplier" value={c.supplier} onClick={() => onNavigate('supplier', c.supplier)} />
-        <ChipLink icon={<Tag size={11} />} label="Category" value={c.category} onClick={() => onNavigate('category', c.category)} />
-        <ChipLink icon={<Building2 size={11} />} label="Department" value={c.department} onClick={() => onNavigate('department', c.department)} />
-        <ChipLink icon={<User size={11} />} label="Owner" value={c.owner || '⚠ No owner'} onClick={c.owner ? () => onNavigate('owner', c.owner!) : undefined}
+        <ChipLink icon={<Building2 size={11} />} label="Supplier" value={c.supplier} type="supplier" onClick={() => onNavigate('supplier', c.supplier)} />
+        <ChipLink icon={<Tag size={11} />} label="Category" value={c.category} type="category" onClick={() => onNavigate('category', c.category)} />
+        <ChipLink icon={<Building2 size={11} />} label="Department" value={c.department} type="department" onClick={() => onNavigate('department', c.department)} />
+        <ChipLink icon={<User size={11} />} label="Owner" value={c.owner || '⚠ No owner'} type="owner" onClick={c.owner ? () => onNavigate('owner', c.owner!) : undefined}
           warn={!c.owner} />
       </div>
 
@@ -509,9 +509,17 @@ function EntityDetail({ node, nodes, onSelect, contracts, focusNode, onFocus }: 
             <div className="flex flex-wrap gap-1">
               {items.map(n => (
                 <button key={n.key}
-                  className="text-[10px] px-2 py-0.5 rounded-full cursor-pointer hover:text-[#E2E8F0] hover:border-[#38BDF8] transition-colors"
-                  style={{ background: '#0F172A', border: '1px solid #1E293B', color: '#94A3B8' }}
+                  className="text-[10px] px-2 py-0.5 rounded-full cursor-pointer transition-colors inline-flex items-center gap-1.5"
+                  style={{
+                    background: '#0F172A',
+                    border: `1px solid ${NODE_COLORS[t]}40`,
+                    color: '#CBD5E1',
+                  }}
                   onClick={() => onSelect(n)}>
+                  <span style={{
+                    width: '5px', height: '5px', borderRadius: '50%',
+                    background: NODE_COLORS[t], display: 'inline-block',
+                  }} />
                   {n.name}
                 </button>
               ))}
@@ -590,20 +598,30 @@ function StatRow({ icon, label, value }: { icon: React.ReactNode; label: string;
   )
 }
 
-function ChipLink({ icon, label, value, onClick, warn }: {
-  icon: React.ReactNode; label: string; value: string; onClick?: () => void; warn?: boolean
+function ChipLink({ icon, label, value, onClick, warn, type }: {
+  icon: React.ReactNode; label: string; value: string
+  onClick?: () => void; warn?: boolean
+  /** Entity type — colours the chip to match its link in the graph. */
+  type?: string
 }) {
+  // Same hue the graph paints the link to this entity, so panel and web share
+  // one visual language.
+  const hue = warn ? '#F59E0B' : (type && NODE_COLORS[type]) || '#38BDF8'
   return (
     <div className="flex items-center gap-2">
       <span style={{ color: '#475569' }}>{icon}</span>
       <span className="text-[9px]" style={{ color: '#64748B' }}>{label}:</span>
       {onClick ? (
-        <button className="text-[10px] cursor-pointer hover:underline transition-colors"
-          style={{ color: warn ? '#F59E0B' : '#38BDF8' }} onClick={onClick}>
+        <button className="text-[10px] cursor-pointer hover:underline transition-colors inline-flex items-center gap-1.5"
+          style={{ color: hue }} onClick={onClick}>
+          <span style={{ width: '6px', height: '2px', borderRadius: '1px', background: hue, display: 'inline-block' }} />
           {value}
         </button>
       ) : (
-        <span className="text-[10px]" style={{ color: warn ? '#F59E0B' : '#94A3B8' }}>{value}</span>
+        <span className="text-[10px] inline-flex items-center gap-1.5" style={{ color: hue }}>
+          <span style={{ width: '6px', height: '2px', borderRadius: '1px', background: hue, display: 'inline-block' }} />
+          {value}
+        </span>
       )}
     </div>
   )
