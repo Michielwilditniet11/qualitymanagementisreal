@@ -47,7 +47,6 @@ and must never be silently broken.
       /components       ← shared UI
       /store
       /tests
-  index.html            ← existing site landing page (leave untouched)
   procurement-analytics.html  ← v1 prototype (leave as-is, becomes /legacy demo)
   ```
 
