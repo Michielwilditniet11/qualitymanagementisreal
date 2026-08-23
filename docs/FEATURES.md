@@ -77,6 +77,50 @@ re-source.
 Precedence when several highlights are active: focus wins, then an insight
 highlight, then selection-neighbourhood highlighting.
 
+## Reading a selection
+
+Selecting a node explains what surrounds it, without a second click:
+
+- **Direct neighbours** stay at full colour and are labelled with the
+  relationship — `Lisa van Dam · owner`, `HR · department`.
+- **Links take the colour of the entity they lead to**, matching the node-type
+  legend: green to an owner, blue to a department, amber to a category, pink to
+  a supplier, purple to a contract. Direct links are drawn heavier.
+- **A relevance-filtered second ring** is dimmed but visible: for a supplier or
+  owner, the departments, categories and owners reached through its contracts;
+  for a contract, its highest-value sibling contracts in the same department or
+  category (capped at eight so a large department cannot flood the view).
+- **Everything else** drops to a faint grey dot.
+
+Labels render on a backing plate at a constant on-screen size, so they stay
+readable however far the camera pulls back to frame the neighbourhood. The
+drawer's chips carry the same relationship colours as the graph.
+
+## Renewal timeline
+
+The Calendar tab is a timeline, not a list. Each contract is one row with a bar
+running to its end date against a month axis, with a vertical line marking
+today.
+
+- The **notice period** is the hatched tail of the bar, with a diamond at the
+  last day notice can still be given. When a contract auto-renews and that day
+  has passed, the marker turns red and the row carries a renew icon — the term
+  is already locked for another cycle.
+- Every bar is annotated at its end: `45d (90d notice)`, or `45d` with no
+  notice period, or `12d overdue`.
+- **Bar colour** follows the same urgency thresholds as the Expiry lens: red
+  under 30 days, amber under 90, blue within the year.
+- **Window presets** — Next 12 months, Next 90 days, Overdue, All. The window
+  is defined by when contracts expire, so anything expiring outside it is
+  excluded rather than drawn as a full-width bar.
+- **Group by department or category** adds section headers with a count and
+  expiring value, which is what makes a heavy month visible at a glance.
+- Clicking a row expands dates, notice deadline, auto-renew, owner and value.
+- Contracts **without an end date** cannot be placed on a timeline; they are
+  listed in a footer strip with their combined value.
+- **Export ICS** produces the same events as before: one per expiry, plus one
+  per notice deadline.
+
 ## Reading the graph
 
 - Number on a node = contracts linked to it.
