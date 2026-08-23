@@ -1,8 +1,44 @@
 # Spider Web — analytics features
 
-The Spider Web tab turns the contract register into a decision tool. It answers
-five questions a Head of Procurement or CFO actually asks, without needing a
-query language.
+The Spider Web is a navigable dashboard over the contract network, styled as a
+terminal: a data ticker on top, mono-set figures, one lens active at a time.
+
+## Reading the map
+
+- The default view is **fully labelled**: an importance-ranked label engine
+  places as many names as fit and guarantees no two labels ever overlap.
+  Hover always wins a label; so does the selection.
+- **Hover** lifts a node, brightens its connections in their relationship
+  colours, and shows a readout pill (name, type, spend, links).
+- The **ticker** carries the portfolio's vitals — spend, value at risk,
+  expiring 90d, open windows, structural gaps — each clickable into the lens
+  that explains it.
+- **Filters**: free-text find, department multi-select, risk level
+  (all / medium+ / high), expiring window, minimum spend, and the node-type
+  legend. Every active dimension appears as a removable chip in the state
+  strip, with CLEAR ALL; breadcrumbs of recent nodes and Alt+← history live
+  in the same strip.
+- **Keyboard**: 1–7 lenses, F fit, S spotlight, Esc clear, arrows in story
+  mode, Alt+← back.
+- The **minimap** (bottom right) is a floor plan of the whole layout; click it
+  to jump. The layout freezes once settled so the map you learn stops moving —
+  the re-layout button reshuffles on demand.
+
+## Gaps lens
+
+The seventh lens renders what is *missing*: hollow wireframe phantoms with
+dashed connectors mark absences — an "unassigned owner" hub, a "2nd supplier?"
+slot beside every sole-source category. The drawer lists each gap with the
+spend it exposes; clicking frames it.
+
+## Present mode
+
+PRESENT composes a narrated fly-through from the analytics engines — the
+portfolio, where the money goes, the biggest dependency and its blast radius,
+what is at risk, what lands next, what is missing, what to do about it. Each
+step drives the lens, the highlight and the camera, with a narration card and
+its key figure. Steps with nothing to say drop out. Arrow keys navigate; Esc
+exits. Every number in a narration comes from the same engine the panels use.
 
 ## Executive KPI strip
 

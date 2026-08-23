@@ -466,3 +466,68 @@ describe('story', () => {
     for (const s of buildStory(portfolio, nodes)) expect(valid.has(s.lens)).toBe(true)
   })
 })
+
+/* ─────────────── Scale (W7) ─────────────── */
+
+describe('scale', () => {
+  it('keeps the label policy fast and bounded at 500 contracts', () => {
+    const big: Contract[] = Array.from({ length: 500 }, (_, i) => contract({
+      name: `Scale ${i}`,
+      supplier: `Supplier ${i % 60}`,
+      category: `Category ${i % 25}`,
+      department: `Dept ${i % 10}`,
+      owner: `Owner ${i % 15}`,
+      annualValue: (i % 97) * 10_000,
+      endDate: inDays((i % 700) - 100),
+    }))
+    const g = buildGraph(big, 900, 600)
+    expect(g.nodes.length).toBeGreaterThan(500)
+
+    // Scatter into a viewport-shaped cloud, as a settled layout would.
+    const screen = new Map<string, ScreenNode>()
+    g.nodes.forEach((n, i) => screen.set(n.key, {
+      key: n.key,
+      x: (i * 137) % 1600,
+      y: (i * 251) % 900,
+      depth: 0.999,
+      radius: 5,
+    }))
+
+    const t0 = performance.now()
+    const plan = labelPlan({
+      nodes: g.nodes, screen, tiers: null,
+      maxValue: Math.max(...g.nodes.map(n => n.value)),
+      viewport: { width: 1600, height: 900 },
+    })
+    const ms = performance.now() - t0
+
+    expect(plan.size).toBeGreaterThan(0)
+    expect(plan.size).toBeLessThanOrEqual(MAX_LABELS)
+    // Runs at 6Hz in production; a plan must cost a fraction of that budget.
+    expect(ms).toBeLessThan(50)
+
+    // The no-overlap guarantee must hold at scale too.
+    const rects = [...plan.entries()].map(([k, level]) =>
+      labelRect(screen.get(k)!, level, 10))
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i], b = rects[j]
+        const overlap = !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom)
+        expect(overlap).toBe(false)
+      }
+    }
+  })
+
+  it('keeps the gap finder linear-ish at 500 contracts', () => {
+    const big: Contract[] = Array.from({ length: 500 }, (_, i) => contract({
+      name: `G${i}`, supplier: `S${i % 40}`, category: `C${i % 20}`,
+      department: `D${i % 8}`, owner: i % 7 === 0 ? undefined : 'Owner',
+      endDate: inDays((i % 400) - 50),
+    }))
+    const g = buildGraph(big, 900, 600)
+    const t0 = performance.now()
+    const gaps = findGaps(big, g.nodes)
+    expect(performance.now() - t0).toBeLessThan(200)
+    expect(gaps.length).toBeGreaterThan(0)
+  })
+})

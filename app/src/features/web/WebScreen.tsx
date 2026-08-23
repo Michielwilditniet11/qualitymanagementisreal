@@ -1,17 +1,40 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { useDataStore } from '../../store/dataStore'
 import { useUIStore } from '../../store/uiStore'
 import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
 import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff } from '../../graph/PlanetaryWeb'
-import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight } from 'lucide-react'
+import type { WebHandle } from '../../graph/PlanetaryWeb'
+import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight, ChevronLeft, X, Play, Sun } from 'lucide-react'
 import type { GraphNode } from '../../data/types'
 import { LENSES, lensForCategory, type LensId } from '../../analytics/lenses'
 import { generateInsights, totalValueAtRisk, type Insight } from '../../analytics/insights'
 import { computeCentrality, assessImpact } from '../../analytics/centrality'
+import { findGaps, gapExposure, type Gap } from '../../analytics/gaps'
+import { buildStory, type StoryStep } from '../../analytics/story'
+import { negotiationCalendar } from '../../analytics/levers'
+
+/* ─── Terminal theme ───
+   Bloomberg discipline (black ground, hairlines, amber attention, semantic
+   red/green) crossed with the app's cyan-AI accent. Numbers set in mono. */
+export const T = {
+  ground: '#04070E',
+  panel: '#080D18',
+  hairline: '#16233A',
+  mono: "ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, monospace",
+  amber: '#FFB020',
+  cyan: '#2FD3E6',
+  green: '#22C55E',
+  red: '#FF4D4D',
+  text: '#E6EDF6',
+  muted: '#5B6B84',
+  faint: '#3A465C',
+}
+
+type RiskFilter = 'all' | 'high' | 'medium+'
 
 export default function WebScreen() {
   const contracts = useDataStore(s => s.getContracts())
-  const [selected, setSelected] = useState<GraphNode | null>(null)
+  const [selected, setSelectedRaw] = useState<GraphNode | null>(null)
   const [visibleTypes, setVisibleTypes] = useState<Record<string, boolean>>({
     department: true, category: true, supplier: true, owner: true, contract: true,
   })
@@ -21,10 +44,38 @@ export default function WebScreen() {
   const [lens, setLens] = useState<LensId>('structure')
   const [activeInsight, setActiveInsight] = useState<Insight | null>(null)
   const [focusNode, setFocusNode] = useState<GraphNode | null>(null)
-  const [showKpis, setShowKpis] = useState(true)
+  const [deptFilter, setDeptFilter] = useState<Set<string>>(new Set())
+  const [riskFilter, setRiskFilter] = useState<RiskFilter>('all')
+  const [spotlight, setSpotlight] = useState(false)
+  const [story, setStory] = useState<StoryStep[] | null>(null)
+  const [storyIdx, setStoryIdx] = useState(0)
+  const handleRef = useRef<WebHandle | null>(null)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
   const insights = useMemo(() => generateInsights(contracts), [contracts])
+  const gaps = useMemo(() => findGaps(contracts, nodes), [contracts, nodes])
+  const calendar = useMemo(() => negotiationCalendar(contracts), [contracts])
+
+  /* ─── Selection with history ─── */
+  const historyRef = useRef<GraphNode[]>([])
+  const [trail, setTrail] = useState<GraphNode[]>([])
+  const setSelected = useCallback((n: GraphNode | null) => {
+    setSelectedRaw(prev => {
+      if (n && n !== prev) {
+        if (prev) historyRef.current = [...historyRef.current.slice(-19), prev]
+        setTrail(t => {
+          const next = [...t.filter(x => x.key !== n.key), n]
+          return next.slice(-5)
+        })
+      }
+      return n
+    })
+  }, [])
+  const goBack = useCallback(() => {
+    const prev = historyRef.current.pop()
+    if (prev) setSelectedRaw(prev)
+    else setSelectedRaw(null)
+  }, [])
 
   // Another screen (Diagnostics) asked for a node to be inspected here.
   const pendingSelection = useUIStore(s => s.pendingSelection)
@@ -38,50 +89,126 @@ export default function WebScreen() {
       setFocusNode(null)
     }
     clearPendingSelection()
-  }, [pendingSelection, nodes, clearPendingSelection])
+  }, [pendingSelection, nodes, clearPendingSelection, setSelected])
+
+  /* ─── Filters → hidden nodes ─── */
+  const departments = useMemo(
+    () => [...new Set(contracts.map(c => c.department).filter(Boolean))].sort(),
+    [contracts])
+
+  const hiddenKeys = useMemo(() => {
+    const hidden = new Set<string>()
+    const deptActive = deptFilter.size > 0
+    const passDept = (d?: string) => !deptActive || (d ? deptFilter.has(d) : false)
+    const passRisk = (n: GraphNode) => {
+      if (riskFilter === 'all' || n.type !== 'contract') return true
+      const lvl = riskLevel(riskScore(n))
+      return riskFilter === 'high' ? lvl === 'high' : lvl !== 'low'
+    }
+    for (const n of nodes) {
+      if (n.type === 'contract') {
+        if (!passDept(n.contract?.department) || !passRisk(n)) hidden.add(n.key)
+      } else if (n.type === 'department') {
+        if (deptActive && !deptFilter.has(n.name)) hidden.add(n.key)
+      } else {
+        // Entities survive if any of their contracts survive the filters.
+        const alive = n.contracts.some(c =>
+          passDept(c.department) &&
+          (riskFilter === 'all' || (() => {
+            const cn = nodes.find(x => x.type === 'contract' && x.contract?.id === c.id)
+            return cn ? passRisk(cn) : true
+          })()))
+        if (!alive) hidden.add(n.key)
+      }
+    }
+    return hidden
+  }, [nodes, deptFilter, riskFilter])
+
+  /* ─── Story mode drives lens + highlight + camera ─── */
+  const storyStep = story?.[storyIdx] ?? null
+  const storyKeys = useMemo(() => {
+    if (!storyStep) return null
+    const known = new Set(nodes.map(n => n.key))
+    return new Set(storyStep.nodeKeys.filter(k => known.has(k)))
+  }, [storyStep, nodes])
+
+  useEffect(() => {
+    if (!storyStep) return
+    setLens(storyStep.lens)
+    const h = handleRef.current
+    if (!h) return
+    // Give the lens a beat to apply before the camera moves.
+    const t = setTimeout(() => {
+      if (storyStep.camera === 'overview' || !storyKeys || storyKeys.size === 0) h.fit()
+      else h.frame([...storyKeys])
+    }, 120)
+    return () => clearTimeout(t)
+  }, [storyStep, storyKeys])
+
+  const startStory = () => {
+    const s = buildStory(contracts, nodes)
+    if (s.length === 0) return
+    setSelected(null); setActiveInsight(null); setFocusNode(null)
+    setStory(s); setStoryIdx(0); setSpotlight(true)
+  }
+  const exitStory = useCallback(() => {
+    setStory(null); setSpotlight(false)
+    handleRef.current?.fit()
+  }, [])
 
   const highlightKeys = useMemo(() => {
+    if (storyKeys && storyKeys.size > 0) return storyKeys
     if (!activeInsight) return null
     const known = new Set(nodes.map(n => n.key))
     return new Set(activeInsight.nodeKeys.filter(k => known.has(k)))
-  }, [activeInsight, nodes])
+  }, [activeInsight, nodes, storyKeys])
 
+  /* ─── Keyboard: lenses, story nav, spotlight ─── */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.tagName === 'TEXTAREA')) return
+      if (story) {
+        if (e.key === 'ArrowRight') setStoryIdx(i => Math.min(i + 1, story.length - 1))
+        else if (e.key === 'ArrowLeft') setStoryIdx(i => Math.max(i - 1, 0))
+        else if (e.key === 'Escape') exitStory()
+        return
+      }
+      const li = parseInt(e.key)
+      if (li >= 1 && li <= LENSES.length) setLens(LENSES[li - 1].id)
+      else if (e.key === 's' || e.key === 'S') setSpotlight(v => !v)
+      else if (e.key === 'ArrowLeft' && e.altKey) goBack()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [story, exitStory, goBack])
+
+  /* ─── Ticker figures ─── */
   const kpis = useMemo(() => {
     const totalSpend = contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0)
     const expiring = contracts.filter(c => c.endDate && daysDiff(c.endDate) > 0 && daysDiff(c.endDate) <= 90)
-    const singleSourced = new Set(
-      insights.filter(i => i.id.startsWith('single-source:')).map(i => i.id)
-    ).size
-    const fields = ['supplier', 'category', 'department', 'owner', 'annualValue', 'endDate'] as const
-    let filled = 0, total = 0
-    for (const c of contracts) {
-      for (const f of fields) {
-        total++
-        const has = f === 'annualValue' ? c.annualValue !== undefined : Boolean((c as any)[f])
-        if (has) filled++
-      }
-    }
     return {
       totalSpend,
       atRisk: totalValueAtRisk(insights, contracts),
       expiringCount: expiring.length,
       expiringValue: expiring.reduce((s, c) => s + (c.annualValue ?? 0), 0),
-      singleSourced,
-      confidence: total > 0 ? Math.round((filled / total) * 100) : 100,
+      gapCount: gaps.length,
+      gapExposure: gapExposure(gaps, contracts),
+      openWindows: calendar.filter(i => i.kind === 'notice-deadline' && !i.missed).length,
     }
-  }, [contracts, insights])
+  }, [contracts, insights, gaps, calendar])
 
   const openInsight = (i: Insight) => {
     if (activeInsight?.id === i.id) { setActiveInsight(null); return }
     setActiveInsight(i)
     setLens(lensForCategory(i.category))
-    setSelected(null)
+    setSelectedRaw(null)
   }
 
   const toggleType = (t: string) => {
     setVisibleTypes(v => {
       const next = { ...v, [t]: !v[t] }
-      if (selected && !next[selected.type]) setSelected(null)
+      if (selected && !next[selected.type]) setSelectedRaw(null)
       return next
     })
   }
@@ -98,96 +225,178 @@ export default function WebScreen() {
     if (n) setSelected(n)
   }
 
+  const clearAll = () => {
+    setSelectedRaw(null); setActiveInsight(null); setFocusNode(null)
+    setDeptFilter(new Set()); setRiskFilter('all'); setSearchQuery('')
+    setSpendThreshold(0); setHighlightExpiring(0); setSpotlight(false)
+    setVisibleTypes({ department: true, category: true, supplier: true, owner: true, contract: true })
+  }
+
+  /* Active state chips — the single answer to "what am I looking at". */
+  const chips: { label: string; onClear: () => void; hue?: string }[] = []
+  if (lens !== 'structure') chips.push({ label: `LENS ${lens.toUpperCase()}`, onClear: () => setLens('structure'), hue: T.cyan })
+  for (const d of deptFilter) chips.push({ label: `DEPT ${d.toUpperCase()}`, onClear: () => setDeptFilter(s => { const n = new Set(s); n.delete(d); return n }) })
+  if (riskFilter !== 'all') chips.push({ label: `RISK ${riskFilter.toUpperCase()}`, onClear: () => setRiskFilter('all'), hue: T.red })
+  if (spendThreshold > 0) chips.push({ label: `MIN ${fmtK(spendThreshold)}`, onClear: () => setSpendThreshold(0) })
+  if (highlightExpiring > 0) chips.push({ label: `EXP ≤${highlightExpiring}D`, onClear: () => setHighlightExpiring(0), hue: T.amber })
+  if (searchQuery) chips.push({ label: `FIND "${searchQuery.toUpperCase()}"`, onClear: () => setSearchQuery('') })
+  if (focusNode) chips.push({ label: `FOCUS ${focusNode.name.toUpperCase()}`, onClear: () => setFocusNode(null), hue: T.cyan })
+  if (activeInsight) chips.push({ label: 'INSIGHT PINNED', onClear: () => setActiveInsight(null), hue: T.amber })
+  if (spotlight && !story) chips.push({ label: 'SPOTLIGHT', onClear: () => setSpotlight(false), hue: T.amber })
+  const hiddenTypes = Object.entries(visibleTypes).filter(([, v]) => !v)
+  for (const [t] of hiddenTypes) chips.push({ label: `HIDE ${t.toUpperCase()}S`, onClear: () => toggleType(t) })
+
   return (
-    <div className="flex-1 flex min-h-0">
+    <div className="flex-1 flex min-h-0" style={{ background: T.ground }}>
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden" onClick={handleLegendChange as any}>
-        {/* Executive KPI strip */}
-        <div className="border-b" style={{ background: '#060A14', borderColor: '#1E293B' }}>
-          <div className="flex items-stretch">
-            {showKpis && (
-              <div className="flex-1 flex items-stretch flex-wrap">
-                <Kpi label="Total annual spend" value={fmtK(kpis.totalSpend)} color="#E2E8F0"
-                  onClick={() => setLens('spend')} hint="Show spend lens" />
-                <Kpi label="Value at risk" value={fmtK(kpis.atRisk)} color="#DC2626"
-                  onClick={() => setLens('risk')} hint="Show risk lens" />
-                <Kpi label="Expiring ≤ 90 days"
-                  value={`${kpis.expiringCount} · ${fmtK(kpis.expiringValue)}`} color="#D97706"
-                  onClick={() => { setLens('expiry'); setHighlightExpiring(90) }} hint="Show expiry lens" />
-                <Kpi label="Single-sourced categories" value={String(kpis.singleSourced)} color="#C026D3"
-                  onClick={() => setLens('concentration')} hint="Show concentration lens" />
-                <Kpi label="Data confidence" value={`${kpis.confidence}%`}
-                  color={kpis.confidence >= 90 ? '#10B981' : kpis.confidence >= 70 ? '#D97706' : '#DC2626'}
-                  onClick={() => setLens('data')} hint="Show data lens" />
-              </div>
-            )}
-            {!showKpis && (
-              <div className="flex-1 flex items-center px-4 py-1.5">
-                <span className="text-[10px]" style={{ color: '#475569' }}>
-                  {fmtK(kpis.totalSpend)} total · {fmtK(kpis.atRisk)} at risk · {kpis.confidence}% data confidence
-                </span>
-              </div>
-            )}
-            <button onClick={() => setShowKpis(v => !v)}
-              className="px-3 text-[10px] cursor-pointer hover:text-white flex-shrink-0"
-              style={{ color: '#475569', borderLeft: '1px solid #1E293B' }}>
-              {showKpis ? 'Hide' : 'Show'}
+
+        {/* ─── Ticker strip ─── */}
+        {!story && (
+          <div className="flex items-stretch overflow-x-auto border-b"
+            style={{ background: T.ground, borderColor: T.hairline, fontFamily: T.mono }}>
+            <Tick label="SPEND" value={fmtK(kpis.totalSpend)} color={T.text} onClick={() => setLens('spend')} />
+            <Tick label="AT RISK" value={fmtK(kpis.atRisk)} color={T.red} onClick={() => setLens('risk')}
+              sub={kpis.totalSpend > 0 ? `${Math.round((kpis.atRisk / kpis.totalSpend) * 100)}%` : undefined} />
+            <Tick label="EXP 90D" value={`${kpis.expiringCount}·${fmtK(kpis.expiringValue)}`} color={T.amber}
+              onClick={() => { setLens('expiry'); setHighlightExpiring(90) }} />
+            <Tick label="WINDOWS" value={String(kpis.openWindows)} color={T.cyan} onClick={() => setLens('expiry')} />
+            <Tick label="GAPS" value={`${kpis.gapCount}·${fmtK(kpis.gapExposure)}`} color="#F472B6" onClick={() => setLens('gaps')} />
+            <div className="flex-1" style={{ borderRight: 'none' }} />
+            <button onClick={startStory}
+              className="flex items-center gap-1.5 px-4 text-[10px] font-semibold tracking-widest cursor-pointer flex-shrink-0 transition-colors hover:brightness-125"
+              style={{ color: T.ground, background: T.cyan, fontFamily: T.mono }}>
+              <Play size={10} fill={T.ground} /> PRESENT
             </button>
           </div>
-        </div>
+        )}
 
-        {/* Lens selector */}
-        <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap" style={{ background: '#080C14', borderColor: '#1E293B' }}>
-          <span className="text-[9px] font-semibold tracking-wider mr-1" style={{ color: '#475569' }}>LENS</span>
-          <div className="flex rounded-lg overflow-hidden flex-shrink-0" style={{ border: '1px solid #1E293B' }}>
-            {LENSES.map(l => (
-              <button
-                key={l.id}
-                onClick={() => setLens(l.id)}
-                title={l.question}
-                className="px-2.5 py-1 text-[11px] transition-colors cursor-pointer"
+        {/* ─── Command bar: lens + filters ─── */}
+        {!story && (
+          <div className="flex items-center gap-2 px-3 py-1.5 border-b flex-wrap"
+            style={{ background: T.panel, borderColor: T.hairline }}>
+            <div className="flex overflow-hidden flex-shrink-0" style={{ border: `1px solid ${T.hairline}` }}>
+              {LENSES.map((l, i) => (
+                <button key={l.id} onClick={() => setLens(l.id)} title={`${l.question} (${i + 1})`}
+                  className="px-2 py-0.5 text-[10px] tracking-wider cursor-pointer transition-colors"
+                  style={{
+                    fontFamily: T.mono,
+                    background: lens === l.id ? T.cyan : 'transparent',
+                    color: lens === l.id ? T.ground : T.muted,
+                    fontWeight: lens === l.id ? 700 : 400,
+                  }}>
+                  {l.label.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            <input
+              type="text" placeholder="FIND NODE…"
+              value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              className="px-2 py-0.5 text-[10px] tracking-wider w-36"
+              style={{
+                fontFamily: T.mono, background: T.ground, color: T.text,
+                border: `1px solid ${T.hairline}`, outline: 'none',
+              }}
+            />
+
+            <TerminalSelect
+              value="" label={deptFilter.size === 0 ? 'DEPT: ALL' : `DEPT: ${deptFilter.size}`}
+              onChange={v => {
+                if (!v) return
+                setDeptFilter(s => {
+                  const n = new Set(s)
+                  n.has(v) ? n.delete(v) : n.add(v)
+                  return n
+                })
+              }}
+              options={departments.map(d => ({
+                value: d, label: `${deptFilter.has(d) ? '■ ' : '□ '}${d}`,
+              }))}
+            />
+
+            <TerminalSelect
+              value={riskFilter} label={`RISK: ${riskFilter.toUpperCase()}`}
+              onChange={v => setRiskFilter((v || 'all') as RiskFilter)}
+              options={[
+                { value: 'all', label: 'All levels' },
+                { value: 'medium+', label: 'Medium & high' },
+                { value: 'high', label: 'High only' },
+              ]}
+            />
+
+            <TerminalSelect
+              value={String(highlightExpiring)} label={highlightExpiring ? `EXP: ${highlightExpiring}D` : 'EXP: OFF'}
+              onChange={v => setHighlightExpiring(parseInt(v || '0'))}
+              options={[
+                { value: '0', label: 'Off' }, { value: '30', label: '30 days' },
+                { value: '90', label: '90 days' }, { value: '180', label: '180 days' },
+                { value: '365', label: '1 year' },
+              ]}
+            />
+
+            <div className="flex items-center gap-1.5 text-[10px]" style={{ color: T.muted, fontFamily: T.mono }}>
+              <span>MIN</span>
+              <input type="range" min={0} max={maxSpend} step={1000} value={spendThreshold}
+                onChange={e => setSpendThreshold(parseInt(e.target.value))}
+                className="w-20 accent-[#2FD3E6]" />
+              <span style={{ color: spendThreshold > 0 ? T.amber : T.muted }} className="tabular-nums w-14">
+                {fmtK(spendThreshold)}
+              </span>
+            </div>
+
+            <div className="flex-1" />
+            <button onClick={() => setSpotlight(v => !v)} title="Spotlight (S)"
+              className="p-1 cursor-pointer transition-colors"
+              style={{ color: spotlight ? T.amber : T.muted }}>
+              <Sun size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* ─── State chips + breadcrumbs ─── */}
+        {!story && (chips.length > 0 || trail.length > 0) && (
+          <div className="flex items-center gap-1.5 px-3 py-1 border-b flex-wrap"
+            style={{ background: T.ground, borderColor: T.hairline }}>
+            {historyRef.current.length > 0 && (
+              <button onClick={goBack} title="Back (Alt+←)"
+                className="flex items-center cursor-pointer p-0.5"
+                style={{ color: T.cyan }}>
+                <ChevronLeft size={12} />
+              </button>
+            )}
+            {trail.length > 1 && (
+              <div className="flex items-center gap-1 mr-1">
+                {trail.slice(0, -1).map(n => (
+                  <button key={n.key} onClick={() => setSelected(n)}
+                    className="text-[9px] tracking-wider cursor-pointer hover:underline"
+                    style={{ color: T.muted, fontFamily: T.mono }}>
+                    {n.name.length > 14 ? n.name.slice(0, 13) + '…' : n.name} ›
+                  </button>
+                ))}
+              </div>
+            )}
+            {chips.map(c => (
+              <button key={c.label} onClick={c.onClear}
+                className="flex items-center gap-1 px-1.5 py-0.5 text-[9px] tracking-wider cursor-pointer group"
                 style={{
-                  background: lens === l.id ? '#1E293B' : 'transparent',
-                  color: lens === l.id ? '#F1F5F9' : '#64748B',
-                }}
-              >
-                {l.label}
+                  fontFamily: T.mono, color: c.hue ?? T.muted,
+                  border: `1px solid ${c.hue ?? T.hairline}`, background: T.panel,
+                }}>
+                {c.label}
+                <X size={8} className="opacity-50 group-hover:opacity-100" />
               </button>
             ))}
+            {chips.length > 1 && (
+              <button onClick={clearAll}
+                className="px-1.5 py-0.5 text-[9px] tracking-wider cursor-pointer"
+                style={{ fontFamily: T.mono, color: T.red, border: `1px solid ${T.hairline}` }}>
+                CLEAR ALL
+              </button>
+            )}
           </div>
-          <span className="text-[10px] ml-1" style={{ color: '#475569' }}>
-            {LENSES.find(l => l.id === lens)?.question}
-          </span>
-        </div>
+        )}
 
-        {/* Search & controls bar */}
-        <div className="flex items-center gap-3 px-4 py-2 border-b flex-wrap" style={{ background: '#0A0F1A', borderColor: '#1E293B' }}>
-          <input
-            type="text" placeholder="Search nodes…"
-            value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-            className="rounded-lg px-3 py-1.5 text-sm w-52 text-white placeholder:text-[#475569]"
-            style={{ background: '#020408', border: '1px solid #1E293B' }}
-          />
-          <div className="flex items-center gap-2 text-xs" style={{ color: '#64748B' }}>
-            <label>Min spend:</label>
-            <input type="range" min={0} max={maxSpend} step={1000} value={spendThreshold}
-              onChange={e => setSpendThreshold(parseInt(e.target.value))}
-              className="w-28 accent-[#38BDF8]" />
-            <span className="text-white w-20 tabular-nums">{fmtK(spendThreshold)}</span>
-          </div>
-          <div className="flex items-center gap-2 text-xs" style={{ color: '#64748B' }}>
-            <label>Expiring within:</label>
-            <select value={highlightExpiring} onChange={e => setHighlightExpiring(parseInt(e.target.value))}
-              className="rounded px-2 py-1 text-white"
-              style={{ background: '#020408', border: '1px solid #1E293B' }}>
-              <option value={0}>Off</option>
-              <option value={30}>30 days</option>
-              <option value={90}>90 days</option>
-              <option value={180}>180 days</option>
-              <option value={365}>1 year</option>
-            </select>
-          </div>
-        </div>
         <PlanetaryWeb
           nodes={nodes} links={links}
           visibleTypes={visibleTypes} selected={selected}
@@ -199,42 +408,169 @@ export default function WebScreen() {
           highlightKeys={highlightKeys}
           focusNode={focusNode}
           onFocus={setFocusNode}
+          gaps={gaps}
+          hiddenKeys={hiddenKeys}
+          spotlight={spotlight || Boolean(story)}
+          chromeless={Boolean(story)}
+          onReady={h => { handleRef.current = h }}
         />
+
+        {/* ─── Story overlay ─── */}
+        {story && storyStep && (
+          <>
+            <div className="absolute bottom-16 left-6 max-w-md rounded-sm p-4 z-10"
+              style={{
+                background: 'rgba(4,7,14,0.94)', border: `1px solid ${T.hairline}`,
+                borderLeft: `2px solid ${T.cyan}`, backdropFilter: 'blur(14px)',
+              }}>
+              <div className="text-[9px] tracking-widest mb-1" style={{ color: T.cyan, fontFamily: T.mono }}>
+                {String(storyIdx + 1).padStart(2, '0')} / {String(story.length).padStart(2, '0')} · {storyStep.source.toUpperCase()}
+              </div>
+              <div className="text-base font-bold text-white mb-1.5">{storyStep.title}</div>
+              <div className="text-[12px] leading-relaxed" style={{ color: '#B6C2D4' }}>
+                {storyStep.narration}
+              </div>
+              {storyStep.figure && (
+                <div className="mt-2 text-lg font-bold tabular-nums" style={{ color: T.amber, fontFamily: T.mono }}>
+                  {storyStep.figure}
+                </div>
+              )}
+            </div>
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 z-10 rounded-sm px-3 py-1.5"
+              style={{ background: 'rgba(4,7,14,0.94)', border: `1px solid ${T.hairline}`, backdropFilter: 'blur(14px)' }}>
+              <button onClick={() => setStoryIdx(i => Math.max(i - 1, 0))} disabled={storyIdx === 0}
+                className="cursor-pointer disabled:opacity-30" style={{ color: T.cyan }}>
+                <ChevronLeft size={14} />
+              </button>
+              <div className="flex gap-1.5">
+                {story.map((s, i) => (
+                  <button key={s.id} onClick={() => setStoryIdx(i)}
+                    className="cursor-pointer rounded-full"
+                    style={{
+                      width: '7px', height: '7px',
+                      background: i === storyIdx ? T.cyan : T.hairline,
+                    }} />
+                ))}
+              </div>
+              <button onClick={() => setStoryIdx(i => Math.min(i + 1, story.length - 1))}
+                disabled={storyIdx === story.length - 1}
+                className="cursor-pointer disabled:opacity-30" style={{ color: T.cyan }}>
+                <ChevronRight size={14} />
+              </button>
+              <button onClick={exitStory}
+                className="text-[9px] tracking-widest px-2 py-0.5 cursor-pointer"
+                style={{ fontFamily: T.mono, color: T.muted, border: `1px solid ${T.hairline}` }}>
+                ESC EXIT
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       {/* ─── Right-side inspection drawer ─── */}
-      <div className="w-80 flex-shrink-0 border-l overflow-y-auto overflow-x-hidden" style={{ background: '#060A14', borderColor: '#1E293B' }}>
-        {!selected ? (
-          <InsightsPanel
-            nodes={nodes} links={links} contracts={contracts}
-            insights={insights} active={activeInsight}
-            onOpen={openInsight} onClear={() => setActiveInsight(null)}
-            onSelectNode={setSelected}
-          />
-        ) : selected.type === 'contract' && selected.contract ? (
-          <ContractDetail node={selected} onNavigate={navigateTo} />
-        ) : (
-          <EntityDetail node={selected} nodes={nodes} onSelect={setSelected}
-            contracts={contracts} focusNode={focusNode} onFocus={setFocusNode} />
-        )}
+      {!story && (
+        <div className="w-80 flex-shrink-0 border-l overflow-y-auto overflow-x-hidden"
+          style={{ background: T.panel, borderColor: T.hairline }}>
+          {!selected ? (
+            lens === 'gaps' ? (
+              <GapsPanel gaps={gaps} contracts={contracts}
+                onFrame={keys => handleRef.current?.frame(keys)} />
+            ) : (
+              <InsightsPanel
+                nodes={nodes} links={links} contracts={contracts}
+                insights={insights} active={activeInsight}
+                onOpen={openInsight} onClear={() => setActiveInsight(null)}
+                onSelectNode={setSelected}
+              />
+            )
+          ) : selected.type === 'contract' && selected.contract ? (
+            <ContractDetail node={selected} onNavigate={navigateTo} />
+          ) : (
+            <EntityDetail node={selected} nodes={nodes} onSelect={setSelected}
+              contracts={contracts} focusNode={focusNode} onFocus={setFocusNode} />
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ─── Terminal primitives ─── */
+
+function Tick({ label, value, sub, color, onClick }: {
+  label: string; value: string; sub?: string; color: string; onClick?: () => void
+}) {
+  return (
+    <button onClick={onClick}
+      className="px-3.5 py-1.5 text-left cursor-pointer flex-shrink-0 transition-colors hover:bg-[#0B1322]"
+      style={{ borderRight: `1px solid ${T.hairline}` }}>
+      <span className="text-[8px] tracking-[0.18em] block" style={{ color: T.muted }}>{label}</span>
+      <span className="text-[13px] font-bold tabular-nums leading-tight" style={{ color }}>
+        {value}
+        {sub && <span className="text-[9px] font-normal ml-1" style={{ color: T.muted }}>{sub}</span>}
+      </span>
+    </button>
+  )
+}
+
+/** A native select disguised as a terminal control. */
+function TerminalSelect({ label, value, options, onChange }: {
+  label: string; value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+}) {
+  return (
+    <div className="relative flex-shrink-0">
+      <select value={value} onChange={e => onChange(e.target.value)}
+        className="absolute inset-0 opacity-0 cursor-pointer w-full"
+        aria-label={label}>
+        <option value="" disabled hidden>{label}</option>
+        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+      <div className="px-2 py-0.5 text-[10px] tracking-wider pointer-events-none"
+        style={{ fontFamily: T.mono, color: T.muted, border: `1px solid ${T.hairline}`, background: T.ground }}>
+        {label} ▾
       </div>
     </div>
   )
 }
 
-function Kpi({ label, value, color, onClick, hint }: {
-  label: string; value: string; color: string; onClick: () => void; hint: string
+function GapsPanel({ gaps, contracts, onFrame }: {
+  gaps: Gap[]; contracts: any[]
+  onFrame: (keys: string[]) => void
 }) {
+  const exposure = gapExposure(gaps, contracts)
   return (
-    <button onClick={onClick} title={hint}
-      className="px-4 py-1.5 text-left cursor-pointer transition-colors hover:bg-[#0F172A] flex-shrink-0"
-      style={{ borderRight: '1px solid #1E293B' }}>
-      <div className="text-[8px] uppercase tracking-wider" style={{ color: '#475569' }}>{label}</div>
-      <div className="text-[13px] font-semibold tabular-nums leading-tight" style={{ color }}>{value}</div>
-    </button>
+    <div className="p-4">
+      <h2 className="font-semibold text-sm mb-1 text-white">What is missing</h2>
+      <p className="text-xs mb-3" style={{ color: '#64748B' }}>
+        Structure that should exist and does not. Hollow nodes mark the absences.
+      </p>
+      <div className="rounded-sm px-3 py-2 mb-4" style={{ background: T.ground, border: `1px solid ${T.hairline}` }}>
+        <div className="text-[8px] tracking-[0.18em]" style={{ color: T.muted, fontFamily: T.mono }}>TOTAL EXPOSED</div>
+        <div className="text-lg font-bold tabular-nums" style={{ color: '#F472B6', fontFamily: T.mono }}>{fmtK(exposure)}</div>
+      </div>
+      {gaps.length === 0 && (
+        <p className="text-xs" style={{ color: '#64748B' }}>No structural gaps — the register is complete.</p>
+      )}
+      <div className="space-y-2">
+        {gaps.map(g => (
+          <button key={g.id} onClick={() => g.nodeKeys.length && onFrame(g.nodeKeys)}
+            className="w-full text-left rounded-sm p-2.5 cursor-pointer transition-colors hover:border-[#F472B6]"
+            style={{ background: T.ground, border: `1px solid ${T.hairline}` }}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] font-medium text-white">{g.title}</span>
+              <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: '#F472B6', fontFamily: T.mono }}>
+                {fmtK(g.exposure)}
+              </span>
+            </div>
+            <div className="text-[10px] mt-1 leading-relaxed" style={{ color: '#94A3B8' }}>{g.detail}</div>
+          </button>
+        ))}
+      </div>
+    </div>
   )
 }
-
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#DC2626', warning: '#D97706', info: '#0EA5E9',
 }

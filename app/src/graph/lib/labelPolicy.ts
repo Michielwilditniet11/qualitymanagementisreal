@@ -21,8 +21,12 @@ export const TIER_WEIGHT: Record<ContextTier, number> = {
 
 /** Never place more labels than this, however much room there appears to be. */
 export const MAX_LABELS = 42
-/** Beyond this screen depth a label is too far to be worth reading. */
-export const MAX_LABEL_DEPTH = 0.995
+/**
+ * NDC depth ≥ 1 is beyond the far plane (or behind the camera after
+ * projection). Perspective NDC depth is highly nonlinear — visible nodes sit
+ * around 0.999 — so anything below 1 counts as readable.
+ */
+export const MAX_LABEL_DEPTH = 1.0
 
 export interface ScreenNode {
   key: string
@@ -95,7 +99,7 @@ export function labelPlan(input: LabelPlanInput): Map<string, LabelLevel> {
     .map(n => ({ n, s: input.screen.get(n.key) }))
     .filter((c): c is { n: GraphNode; s: ScreenNode } => {
       if (!c.s) return false
-      if (c.s.depth > MAX_LABEL_DEPTH) return false
+      if (c.s.depth >= MAX_LABEL_DEPTH) return false
       // Off-screen nodes cannot be read; allow a small margin for partials.
       if (c.s.x < -80 || c.s.x > width + 80) return false
       if (c.s.y < -60 || c.s.y > height + 60) return false
