@@ -19,6 +19,7 @@ export default function WebScreen() {
   const [highlightExpiring, setHighlightExpiring] = useState(0)
   const [lens, setLens] = useState<LensId>('structure')
   const [activeInsight, setActiveInsight] = useState<Insight | null>(null)
+  const [focusNode, setFocusNode] = useState<GraphNode | null>(null)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
   const insights = useMemo(() => generateInsights(contracts), [contracts])
@@ -121,6 +122,8 @@ export default function WebScreen() {
           highlightExpiring={highlightExpiring}
           lens={lens}
           highlightKeys={highlightKeys}
+          focusNode={focusNode}
+          onFocus={setFocusNode}
         />
       </div>
 
@@ -136,7 +139,8 @@ export default function WebScreen() {
         ) : selected.type === 'contract' && selected.contract ? (
           <ContractDetail node={selected} onNavigate={navigateTo} />
         ) : (
-          <EntityDetail node={selected} nodes={nodes} onSelect={setSelected} />
+          <EntityDetail node={selected} nodes={nodes} onSelect={setSelected}
+            contracts={contracts} focusNode={focusNode} onFocus={setFocusNode} />
         )}
       </div>
     </div>
@@ -356,10 +360,17 @@ function ContractDetail({ node, onNavigate }: { node: GraphNode; onNavigate: (ty
   )
 }
 
-function EntityDetail({ node, nodes, onSelect }: {
+function EntityDetail({ node, nodes, onSelect, contracts, focusNode, onFocus }: {
   node: GraphNode; nodes: GraphNode[]
   onSelect: (n: GraphNode) => void
+  contracts: any[]
+  focusNode: GraphNode | null
+  onFocus: (n: GraphNode | null) => void
 }) {
+  const totalSpend = contracts.reduce((s: number, c: any) => s + (c.annualValue ?? 0), 0)
+  const impact = assessImpact(node, totalSpend)
+  const isFocused = focusNode?.key === node.key
+
   return (
     <div className="p-4">
       <div className="mb-3">
@@ -369,10 +380,51 @@ function EntityDetail({ node, nodes, onSelect }: {
         <h2 className="font-semibold text-sm text-white">{node.name}</h2>
       </div>
 
+      <button onClick={() => onFocus(isFocused ? null : node)}
+        className="w-full mb-3 text-[10px] py-1.5 rounded-lg cursor-pointer transition-colors hover:text-white"
+        style={{
+          background: isFocused ? '#1E293B' : '#0F172A',
+          border: `1px solid ${isFocused ? '#38BDF8' : '#1E293B'}`,
+          color: isFocused ? '#38BDF8' : '#94A3B8',
+        }}>
+        {isFocused ? 'Exit focus' : 'Focus on this node'}
+      </button>
+
       <div className="grid grid-cols-2 gap-2 mb-3">
         <MetricCard label="Total Spend" value={fmtK(node.value)} color="#38BDF8" />
         <MetricCard label="Contracts" value={String(node.contracts.length)} color="#94A3B8" />
       </div>
+
+      {impact.contractCount > 0 && (
+        <div className="rounded-lg p-2.5 mb-3" style={{ background: '#0A0F1A', border: '1px solid #1E293B' }}>
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <AlertTriangle size={11} color="#D97706" />
+            <span className="text-[9px] font-semibold tracking-wider" style={{ color: '#D97706' }}>
+              IMPACT IF LOST
+            </span>
+          </div>
+          <div className="text-[10px] leading-relaxed" style={{ color: '#94A3B8' }}>
+            {impact.contractCount} contract{impact.contractCount === 1 ? '' : 's'} worth{' '}
+            <span className="font-semibold" style={{ color: '#E2E8F0' }}>{fmtK(impact.annualValue)}</span>
+            {' '}({Math.round(impact.spendShare * 100)}% of portfolio) would need replacing.
+          </div>
+          {impact.departments.length > 0 && (
+            <div className="mt-1.5">
+              <div className="text-[8px] uppercase tracking-wider mb-1" style={{ color: '#475569' }}>
+                Departments affected ({impact.departments.length})
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {impact.departments.map(d => (
+                  <span key={d} className="text-[9px] px-1.5 py-0.5 rounded"
+                    style={{ background: '#0F172A', border: '1px solid #1E293B', color: '#94A3B8' }}>
+                    {d}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {['department', 'category', 'supplier', 'owner'].map(t => {
         if (t === node.type) return null

@@ -6,6 +6,7 @@ import type { GraphNode } from '../data/types'
 import { NODE_COLORS, TYPE_LABELS } from './buildGraph'
 import { riskScore, riskLevel, RISK_COLORS, fmtK } from '../analytics/risk'
 import { lensStyle, buildLensContext, LENSES, type LensId } from '../analytics/lenses'
+import { egoNetwork } from '../analytics/centrality'
 
 /* ─── Props ─── */
 interface Props {
@@ -20,6 +21,9 @@ interface Props {
   lens: LensId
   /** Nodes pinned by an insight; everything else dims. */
   highlightKeys?: Set<string> | null
+  /** Node whose ego network is isolated; everything outside it dims hard. */
+  focusNode?: GraphNode | null
+  onFocus?: (n: GraphNode | null) => void
 }
 
 /* ─── Constants ─── */
@@ -134,13 +138,16 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
 
 /* ─── Exported wrapper ─── */
 export default function PlanetaryWeb(props: Props) {
-  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, lens, highlightKeys } = props
+  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, lens, highlightKeys, focusNode, onFocus } = props
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<any>(null)
   const selectedRef = useRef(selected)
   selectedRef.current = selected
   const onSelectRef = useRef(onSelect)
   onSelectRef.current = onSelect
+  const onFocusRef = useRef(onFocus)
+  onFocusRef.current = onFocus
+  const lastClickRef = useRef<{ key: string | null; at: number }>({ key: null, at: 0 })
 
   const maxValue = useMemo(() => Math.max(1, ...nodes.map(n => n.value)), [nodes])
   const lensCtx = useMemo(() => buildLensContext(nodes), [nodes])
@@ -183,9 +190,15 @@ export default function PlanetaryWeb(props: Props) {
     return { fgNodes, fgLinks }
   }, [nodes, links, visibleTypes, spendThreshold, maxValue])
 
-  // An insight's highlight wins over selection-neighbourhood highlighting; when
-  // both are active the selected node and its neighbours are added on top.
+  // Precedence: focus isolates its ego network and overrides everything else.
+  // Otherwise an insight's highlight wins over selection-neighbourhood
+  // highlighting; when both are active the selection is added on top.
   const highlightSet = useMemo(() => {
+    if (focusNode) {
+      const s = egoNetwork(focusNode, 2)
+      if (selected) s.add(selected.key)
+      return s
+    }
     if (highlightKeys && highlightKeys.size > 0) {
       const s = new Set(highlightKeys)
       if (selected) {
@@ -198,7 +211,7 @@ export default function PlanetaryWeb(props: Props) {
     const s = new Set([selected.key])
     for (const nb of selected.neighbors) s.add(nb.key)
     return s
-  }, [selected, highlightKeys])
+  }, [selected, highlightKeys, focusNode])
 
   const highlightSetRef = useRef(highlightSet)
   highlightSetRef.current = highlightSet
@@ -258,6 +271,17 @@ export default function PlanetaryWeb(props: Props) {
       .onNodeClick((n: any) => {
         if (!n) return
         const gn = n.graphNode as GraphNode
+
+        // Second click on the same node inside the double-click window focuses it.
+        const now = performance.now()
+        if (lastClickRef.current.key === gn.key && now - lastClickRef.current.at < 400) {
+          lastClickRef.current = { key: null, at: 0 }
+          onFocusRef.current?.(gn)
+          onSelectRef.current(gn)
+          return
+        }
+        lastClickRef.current = { key: gn.key, at: now }
+
         if (selectedRef.current === gn) {
           onSelectRef.current(null)
         } else {
@@ -269,7 +293,10 @@ export default function PlanetaryWeb(props: Props) {
           )
         }
       })
-      .onBackgroundClick(() => onSelectRef.current(null))
+      .onBackgroundClick(() => {
+        onSelectRef.current(null)
+        onFocusRef.current?.(null)
+      })
       .d3VelocityDecay(0.3)
       .d3AlphaDecay(0.02)
       .cooldownTime(5000)
@@ -354,6 +381,37 @@ export default function PlanetaryWeb(props: Props) {
     graphRef.current.nodeThreeObject(graphRef.current.nodeThreeObject())
     graphRef.current.linkColor(graphRef.current.linkColor())
   }, [highlightSet, selected, expiringSet])
+
+  // Ease the camera onto a focused node's ego network
+  useEffect(() => {
+    if (!graphRef.current || !focusNode) return
+    const ego = egoNetwork(focusNode, 2)
+    const gd = graphRef.current.graphData()
+    const targets = gd.nodes.filter((n: any) => ego.has(n.id) && n.x !== undefined)
+    if (targets.length === 0) return
+    let cx = 0, cy = 0, cz = 0
+    for (const n of targets) { cx += n.x; cy += n.y; cz += n.z }
+    cx /= targets.length; cy /= targets.length; cz /= targets.length
+    let maxR = 0
+    for (const n of targets) {
+      const d = Math.sqrt((n.x - cx) ** 2 + (n.y - cy) ** 2 + (n.z - cz) ** 2)
+      if (d > maxR) maxR = d
+    }
+    const dist = Math.min(Math.max(maxR * 2, 110), 900)
+    graphRef.current.cameraPosition(
+      { x: cx, y: cy + dist * 0.25, z: cz + dist },
+      { x: cx, y: cy, z: cz },
+      800
+    )
+  }, [focusNode])
+
+  // Esc leaves focus mode
+  useEffect(() => {
+    if (!focusNode) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onFocusRef.current?.(null) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [focusNode])
 
   // Frame the nodes an insight points at
   useEffect(() => {
@@ -511,6 +569,24 @@ export default function PlanetaryWeb(props: Props) {
         </div>
       </div>
 
+      {/* ─── HUD: Focus banner ─── */}
+      {focusNode && (
+        <div className="absolute left-1/2 top-3 rounded-lg px-3 py-1.5 flex items-center gap-2"
+          style={{
+            transform: 'translateX(-50%)', background: 'rgba(8,12,20,0.92)',
+            border: '1px solid #334155', backdropFilter: 'blur(12px)',
+          }}>
+          <span className="text-[10px]" style={{ color: '#94A3B8', fontFamily: "'Inter', sans-serif" }}>
+            Focused on <span style={{ color: '#F1F5F9', fontWeight: 600 }}>{focusNode.name}</span>
+          </span>
+          <button onClick={() => onFocus?.(null)}
+            className="text-[9px] px-1.5 py-0.5 rounded cursor-pointer hover:text-white"
+            style={{ background: '#1E293B', color: '#94A3B8', fontFamily: "'Inter', sans-serif" }}>
+            Exit · Esc
+          </button>
+        </div>
+      )}
+
       {/* ─── HUD: Bottom info ─── */}
       <div className="absolute bottom-3 left-3" style={{ pointerEvents: 'none' }}>
         <span className="text-[9px] font-medium" style={{ color: '#374151', fontFamily: "'Inter', sans-serif" }}>
@@ -519,7 +595,7 @@ export default function PlanetaryWeb(props: Props) {
       </div>
       <div className="absolute bottom-3 right-3" style={{ pointerEvents: 'none' }}>
         <span className="text-[9px]" style={{ color: '#374151', fontFamily: "'Inter', sans-serif" }}>
-          Orbit · Zoom · Click to inspect
+          Orbit · Zoom · Click to inspect · Double-click to focus
         </span>
       </div>
     </div>
