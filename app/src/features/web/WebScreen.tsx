@@ -4,6 +4,7 @@ import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
 import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff } from '../../graph/PlanetaryWeb'
 import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight } from 'lucide-react'
 import type { GraphNode } from '../../data/types'
+import { LENSES, type LensId } from '../../analytics/lenses'
 
 export default function WebScreen() {
   const contracts = useDataStore(s => s.getContracts())
@@ -14,6 +15,7 @@ export default function WebScreen() {
   const [searchQuery, setSearchQuery] = useState('')
   const [spendThreshold, setSpendThreshold] = useState(0)
   const [highlightExpiring, setHighlightExpiring] = useState(0)
+  const [lens, setLens] = useState<LensId>('structure')
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
 
@@ -41,6 +43,30 @@ export default function WebScreen() {
     <div className="flex-1 flex min-h-0">
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-h-0" onClick={handleLegendChange as any}>
+        {/* Lens selector */}
+        <div className="flex items-center gap-2 px-4 py-2 border-b" style={{ background: '#080C14', borderColor: '#1E293B' }}>
+          <span className="text-[9px] font-semibold tracking-wider mr-1" style={{ color: '#475569' }}>LENS</span>
+          <div className="flex rounded-lg overflow-hidden" style={{ border: '1px solid #1E293B' }}>
+            {LENSES.map(l => (
+              <button
+                key={l.id}
+                onClick={() => setLens(l.id)}
+                title={l.question}
+                className="px-2.5 py-1 text-[11px] transition-colors cursor-pointer"
+                style={{
+                  background: lens === l.id ? '#1E293B' : 'transparent',
+                  color: lens === l.id ? '#F1F5F9' : '#64748B',
+                }}
+              >
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <span className="text-[10px] ml-1" style={{ color: '#475569' }}>
+            {LENSES.find(l => l.id === lens)?.question}
+          </span>
+        </div>
+
         {/* Search & controls bar */}
         <div className="flex items-center gap-3 px-4 py-2 border-b" style={{ background: '#0A0F1A', borderColor: '#1E293B' }}>
           <input
@@ -76,6 +102,7 @@ export default function WebScreen() {
           searchQuery={searchQuery}
           spendThreshold={spendThreshold}
           highlightExpiring={highlightExpiring}
+          lens={lens}
         />
       </div>
 

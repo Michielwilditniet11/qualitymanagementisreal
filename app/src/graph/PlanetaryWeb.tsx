@@ -5,6 +5,7 @@ import * as THREE from 'three'
 import type { GraphNode } from '../data/types'
 import { NODE_COLORS, TYPE_LABELS } from './buildGraph'
 import { riskScore, riskLevel, RISK_COLORS, fmtK } from '../analytics/risk'
+import { lensStyle, buildLensContext, LENSES, type LensId } from '../analytics/lenses'
 
 /* ─── Props ─── */
 interface Props {
@@ -16,6 +17,7 @@ interface Props {
   searchQuery: string
   spendThreshold: number
   highlightExpiring: number
+  lens: LensId
 }
 
 /* ─── Constants ─── */
@@ -26,9 +28,15 @@ interface FGNode {
   graphNode: GraphNode
   type: string
   name: string
+  /** Size before the active lens applies its multiplier. */
+  baseVal: number
   val: number
   color: string
   riskLvl: 'high' | 'medium' | 'low'
+  ring?: string
+  labelAlways?: boolean
+  /** Risk glow only reads as signal in lenses that are about risk. */
+  showRiskGlow?: boolean
 }
 
 interface FGLink {
@@ -66,10 +74,17 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
   group.add(sprite)
 
   // High-risk glow
-  if (n.type === 'contract' && n.riskLvl === 'high') {
+  if (n.showRiskGlow && n.type === 'contract' && n.riskLvl === 'high') {
     const glowGeo = new THREE.SphereGeometry(r * 2.5, 16, 16)
     const glowMat = new THREE.MeshBasicMaterial({ color: '#DC2626', transparent: true, opacity: 0.12, side: THREE.BackSide })
     group.add(new THREE.Mesh(glowGeo, glowMat))
+  }
+
+  // Lens-driven emphasis ring
+  if (n.ring) {
+    const lensRingGeo = new THREE.RingGeometry(r * 2.6, r * 3.1, 32)
+    const lensRingMat = new THREE.MeshBasicMaterial({ color: n.ring, transparent: true, opacity: 0.55, side: THREE.DoubleSide })
+    group.add(new THREE.Mesh(lensRingGeo, lensRingMat))
   }
 
   // Expiring ring
@@ -87,7 +102,7 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
   }
 
   // Name label below
-  if (!isDim && (selected?.key === n.id || (highlightSet?.has(n.id)) || n.type !== 'contract')) {
+  if (!isDim && (selected?.key === n.id || n.labelAlways || (highlightSet?.has(n.id)) || n.type !== 'contract')) {
     const lCanvas = document.createElement('canvas')
     lCanvas.width = 256
     lCanvas.height = 48
@@ -117,7 +132,7 @@ function makeNodeObject(n: FGNode, selected: GraphNode | null, highlightSet: Set
 
 /* ─── Exported wrapper ─── */
 export default function PlanetaryWeb(props: Props) {
-  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring } = props
+  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, lens } = props
   const containerRef = useRef<HTMLDivElement>(null)
   const graphRef = useRef<any>(null)
   const selectedRef = useRef(selected)
@@ -126,6 +141,7 @@ export default function PlanetaryWeb(props: Props) {
   onSelectRef.current = onSelect
 
   const maxValue = useMemo(() => Math.max(1, ...nodes.map(n => n.value)), [nodes])
+  const lensCtx = useMemo(() => buildLensContext(nodes), [nodes])
 
   const { fgNodes, fgLinks } = useMemo(() => {
     const visibleNodes = nodes.filter(n => {
@@ -136,18 +152,18 @@ export default function PlanetaryWeb(props: Props) {
     const visKeys = new Set(visibleNodes.map(n => n.key))
 
     const fgNodes: FGNode[] = visibleNodes.map(n => {
-      const risk = riskScore(n)
-      const lvl = riskLevel(risk)
-      const isHighRisk = n.type === 'contract' && lvl === 'high'
+      const lvl = riskLevel(riskScore(n))
+      const baseVal = n.type === 'contract'
+        ? 3 + 12 * Math.sqrt((n.contract?.annualValue ?? 0) / maxValue)
+        : ({ department: 10, category: 8, supplier: 6, owner: 5 } as Record<string, number>)[n.type] || 6
       return {
         id: n.key,
         graphNode: n,
         type: n.type,
         name: n.name,
-        val: n.type === 'contract'
-          ? 3 + 12 * Math.sqrt((n.contract?.annualValue ?? 0) / maxValue)
-          : ({ department: 10, category: 8, supplier: 6, owner: 5 } as Record<string, number>)[n.type] || 6,
-        color: isHighRisk ? '#DC2626' : NODE_COLORS[n.type] || '#E4E4E7',
+        baseVal,
+        val: baseVal,
+        color: NODE_COLORS[n.type] || '#E4E4E7',
         riskLvl: lvl,
       }
     })
@@ -301,6 +317,23 @@ export default function PlanetaryWeb(props: Props) {
     return () => clearInterval(poll)
   }, [fgNodes, fgLinks])
 
+  // Apply the active lens by mutating existing node objects, so the force
+  // layout keeps the positions it has already settled on.
+  useEffect(() => {
+    for (const n of fgNodes) {
+      const style = lensStyle(n.graphNode, lens, lensCtx)
+      n.color = style.color
+      n.val = n.baseVal * style.sizeMult
+      n.ring = style.ring
+      n.labelAlways = style.labelAlways
+      n.showRiskGlow = lens === 'structure' || lens === 'risk'
+    }
+    if (!graphRef.current) return
+    graphRef.current.nodeColor(graphRef.current.nodeColor())
+    graphRef.current.nodeVal(graphRef.current.nodeVal())
+    graphRef.current.nodeThreeObject(graphRef.current.nodeThreeObject())
+  }, [lens, lensCtx, fgNodes])
+
   // Refresh visuals on selection/highlight change
   useEffect(() => {
     if (!graphRef.current) return
@@ -351,6 +384,8 @@ export default function PlanetaryWeb(props: Props) {
     return { high, medium, low, totalAtRisk, orphan }
   }, [nodes])
 
+  const lensDef = LENSES.find(l => l.id === lens) ?? LENSES[0]
+
   const totalSpend = useMemo(() =>
     nodes.filter(n => n.type === 'contract').reduce((s, n) => s + (n.contract?.annualValue ?? 0), 0),
     [nodes]
@@ -396,6 +431,24 @@ export default function PlanetaryWeb(props: Props) {
       {/* ─── HUD: Top-left legend ─── */}
       <div className="absolute top-3 left-3 rounded-lg p-3"
         style={{ background: 'rgba(8,12,20,0.9)', border: '1px solid #1F2937', backdropFilter: 'blur(12px)' }}>
+        <div className="text-[10px] font-semibold tracking-wider mb-0.5" style={{ color: '#6B7280', fontFamily: "'Inter', sans-serif" }}>
+          {lensDef.label.toUpperCase()} LENS
+        </div>
+        <div className="text-[9px] mb-2" style={{ color: '#4B5563', fontFamily: "'Inter', sans-serif" }}>
+          {lensDef.question}
+        </div>
+
+        {lensDef.scale.length > 0 && (
+          <div className="mb-2 pb-2" style={{ borderBottom: '1px solid #1F2937' }}>
+            {lensDef.scale.map(s => (
+              <div key={s.label} className="flex items-center gap-2 mb-1">
+                <div style={{ width: '8px', height: '8px', borderRadius: '2px', background: s.color }} />
+                <span className="text-[10px]" style={{ color: '#9CA3AF', fontFamily: "'Inter', sans-serif" }}>{s.label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div className="text-[10px] font-semibold tracking-wider mb-2" style={{ color: '#6B7280', fontFamily: "'Inter', sans-serif" }}>
           NODE TYPES
         </div>
