@@ -1,16 +1,9 @@
 import { useState, useMemo } from 'react'
 import { useDataStore } from '../../store/dataStore'
 import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
-import PlanetaryWeb from '../../graph/PlanetaryWeb'
+import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff } from '../../graph/PlanetaryWeb'
+import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight } from 'lucide-react'
 import type { GraphNode } from '../../data/types'
-
-function fmtMoney(v?: number) {
-  return v === undefined ? '—' : '€' + Math.round(v).toLocaleString('en-US')
-}
-
-function daysDiff(d: Date): number {
-  return Math.round((d.getTime() - Date.now()) / 86400000)
-}
 
 export default function WebScreen() {
   const contracts = useDataStore(s => s.getContracts())
@@ -39,28 +32,35 @@ export default function WebScreen() {
 
   const maxSpend = Math.max(1, ...contracts.map(c => c.annualValue ?? 0))
 
+  const navigateTo = (type: string, name: string) => {
+    const n = nodes.find(nd => nd.type === type && nd.name === name)
+    if (n) setSelected(n)
+  }
+
   return (
     <div className="flex-1 flex min-h-0">
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-h-0" onClick={handleLegendChange as any}>
         {/* Search & controls bar */}
-        <div className="flex items-center gap-3 px-4 py-2 bg-[#171e2e] border-b border-[#2a3650]">
+        <div className="flex items-center gap-3 px-4 py-2 border-b" style={{ background: '#0A0F1A', borderColor: '#1E293B' }}>
           <input
             type="text" placeholder="Search nodes…"
             value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-            className="bg-[#0f1420] border border-[#2a3650] rounded-lg px-3 py-1.5 text-sm w-52 text-white placeholder:text-[#8fa0bd]"
+            className="rounded-lg px-3 py-1.5 text-sm w-52 text-white placeholder:text-[#475569]"
+            style={{ background: '#020408', border: '1px solid #1E293B' }}
           />
-          <div className="flex items-center gap-2 text-xs text-[#8fa0bd]">
+          <div className="flex items-center gap-2 text-xs" style={{ color: '#64748B' }}>
             <label>Min spend:</label>
             <input type="range" min={0} max={maxSpend} step={1000} value={spendThreshold}
               onChange={e => setSpendThreshold(parseInt(e.target.value))}
-              className="w-28 accent-[#4da3ff]" />
-            <span className="text-white w-20">{fmtMoney(spendThreshold)}</span>
+              className="w-28 accent-[#38BDF8]" />
+            <span className="text-white w-20 tabular-nums">{fmtK(spendThreshold)}</span>
           </div>
-          <div className="flex items-center gap-2 text-xs text-[#8fa0bd]">
+          <div className="flex items-center gap-2 text-xs" style={{ color: '#64748B' }}>
             <label>Expiring within:</label>
             <select value={highlightExpiring} onChange={e => setHighlightExpiring(parseInt(e.target.value))}
-              className="bg-[#0f1420] border border-[#2a3650] rounded px-2 py-1 text-white">
+              className="rounded px-2 py-1 text-white"
+              style={{ background: '#020408', border: '1px solid #1E293B' }}>
               <option value={0}>Off</option>
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
@@ -79,89 +79,220 @@ export default function WebScreen() {
         />
       </div>
 
-      {/* Side panel */}
-      <div className="w-80 bg-[#171e2e] border-l border-[#2a3650] p-4 overflow-y-auto">
+      {/* ─── Right-side inspection drawer ─── */}
+      <div className="w-80 border-l overflow-y-auto" style={{ background: '#060A14', borderColor: '#1E293B' }}>
         {!selected ? (
-          <div>
-            <h2 className="font-semibold mb-2">Network</h2>
-            <p className="text-[#8fa0bd] text-sm">Click any node to inspect its connections, spend and risk profile.</p>
-            <div className="mt-4 text-xs text-[#8fa0bd] space-y-1">
-              <div>Nodes: {nodes.length}</div>
-              <div>Links: {links.length}</div>
-              <div>Total spend: {fmtMoney(contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0))}</div>
-            </div>
-          </div>
+          <EmptyState nodes={nodes} links={links} contracts={contracts} />
         ) : selected.type === 'contract' && selected.contract ? (
-          <div>
-            <h2 className="font-semibold mb-1" style={{ color: NODE_COLORS.contract }}>{selected.name}</h2>
-            <div className="space-y-0.5 text-sm">
-              <Row k="Supplier" v={selected.contract.supplier} />
-              <Row k="Category" v={selected.contract.category} />
-              <Row k="Department" v={selected.contract.department} />
-              <Row k="Owner" v={selected.contract.owner || '⚠ no owner'} />
-              <Row k="Annual value" v={fmtMoney(selected.contract.annualValue)} />
-              <Row k="Start" v={selected.contract.startDate?.toISOString().slice(0, 10) ?? '—'} />
-              <Row k="End" v={selected.contract.endDate?.toISOString().slice(0, 10) ?? '—'} />
-              <Row k="Status" v={selected.contract.status ?? '—'} />
-              <Row k="Notice period" v={selected.contract.noticePeriodDays ? `${selected.contract.noticePeriodDays} days` : '—'} />
-              <Row k="Auto-renew" v={selected.contract.autoRenew === true ? 'Yes' : selected.contract.autoRenew === false ? 'No' : '—'} />
-              {selected.contract.endDate && (
-                <Row k="Days to expiry" v={(() => {
-                  const d = daysDiff(selected.contract.endDate!)
-                  return d < 0 ? `Expired ${-d}d ago` : `${d}d`
-                })()} />
-              )}
-            </div>
-          </div>
+          <ContractDetail node={selected} onNavigate={navigateTo} />
         ) : (
-          <div>
-            <h2 className="font-semibold mb-1" style={{ color: NODE_COLORS[selected.type] }}>{selected.name}</h2>
-            <div className="text-xs text-[#8fa0bd] mb-2">{selected.type}</div>
-            <div className="space-y-0.5 text-sm">
-              <Row k="Linked contracts" v={String(selected.contracts.length)} />
-              <Row k="Total annual spend" v={fmtMoney(selected.value)} />
-            </div>
-            {/* Grouped neighbors */}
-            {['department', 'category', 'supplier', 'owner'].map(t => {
-              const items = [...selected.neighbors].filter(n => n.type === t && t !== 'contract')
-              if (items.length === 0) return null
-              return (
-                <div key={t} className="mt-3">
-                  <div className="text-xs text-[#8fa0bd] mb-1">{t.charAt(0).toUpperCase() + t.slice(1)}s:</div>
-                  <div className="flex flex-wrap gap-1">
-                    {items.map(n => (
-                      <span key={n.key} className="bg-[#1d2639] border border-[#2a3650] text-[#8fa0bd] text-[11px] px-2 py-0.5 rounded-full cursor-pointer hover:text-white"
-                        onClick={() => setSelected(n)}>{n.name}</span>
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
-            {/* Contract list */}
-            <div className="mt-3">
-              <div className="text-xs text-[#8fa0bd] mb-1">Contracts:</div>
-              <div className="space-y-1">
-                {selected.contracts.slice(0, 20).map(c => (
-                  <div key={c.id} className="text-xs bg-[#0f1420] rounded p-1.5 cursor-pointer hover:bg-[#1d2639]"
-                    onClick={() => { const cn = nodes.find(n => n.type === 'contract' && n.contract?.id === c.id); if (cn) setSelected(cn) }}>
-                    <div className="font-medium">{c.name}</div>
-                    <div className="text-[#8fa0bd]">{c.supplier} · {fmtMoney(c.annualValue)}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+          <EntityDetail node={selected} nodes={nodes} onSelect={setSelected} />
         )}
       </div>
     </div>
   )
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function EmptyState({ nodes, links, contracts }: { nodes: GraphNode[]; links: { source: GraphNode; target: GraphNode }[]; contracts: any[] }) {
+  const totalSpend = contracts.reduce((s: number, c: any) => s + (c.annualValue ?? 0), 0)
   return (
-    <div className="flex justify-between py-1 border-b border-[#2a3650]/50">
-      <span className="text-[#8fa0bd]">{k}</span>
-      <span>{v}</span>
+    <div className="p-4">
+      <h2 className="font-semibold text-sm mb-1 text-white">Network Overview</h2>
+      <p className="text-xs mb-4" style={{ color: '#64748B' }}>Click any node to inspect its connections, spend, and risk profile.</p>
+      <div className="space-y-2">
+        <StatRow icon={<FileText size={13} />} label="Nodes" value={String(nodes.length)} />
+        <StatRow icon={<ChevronRight size={13} />} label="Connections" value={String(links.length)} />
+        <StatRow icon={<DollarSign size={13} />} label="Total spend" value={fmtK(totalSpend)} />
+      </div>
+    </div>
+  )
+}
+
+function ContractDetail({ node, onNavigate }: { node: GraphNode; onNavigate: (type: string, name: string) => void }) {
+  const c = node.contract!
+  const risk = riskScore(node)
+  const level = riskLevel(risk)
+  const reasons = riskReasons(node)
+
+  return (
+    <div className="p-4">
+      <div className="mb-3">
+        <h2 className="font-semibold text-sm text-white leading-tight">{c.name}</h2>
+        <div className="flex items-center gap-2 mt-1.5">
+          <RiskBadge level={level} score={risk} />
+          {c.status && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: '#1E293B', color: '#94A3B8' }}>
+              {c.status}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <MetricCard label="Annual Value" value={fmtK(c.annualValue ?? 0)} color="#38BDF8" />
+        <MetricCard label="Days to Expiry"
+          value={c.endDate ? (() => { const d = daysDiff(c.endDate!); return d < 0 ? `−${-d}d` : `${d}d` })() : '—'}
+          color={c.endDate && daysDiff(c.endDate) < 30 ? '#FF0055' : c.endDate && daysDiff(c.endDate) < 90 ? '#F59E0B' : '#10B981'} />
+      </div>
+
+      <div className="space-y-0 mb-3">
+        <DetailRow label="Start" value={fmtDate(c.startDate)} />
+        <DetailRow label="End" value={fmtDate(c.endDate)} />
+        <DetailRow label="Notice period" value={c.noticePeriodDays ? `${c.noticePeriodDays} days` : '—'} />
+        <DetailRow label="Auto-renew" value={c.autoRenew === true ? 'Yes' : c.autoRenew === false ? 'No' : '—'} />
+      </div>
+
+      <div className="space-y-1.5 mb-3">
+        <ChipLink icon={<Building2 size={11} />} label="Supplier" value={c.supplier} onClick={() => onNavigate('supplier', c.supplier)} />
+        <ChipLink icon={<Tag size={11} />} label="Category" value={c.category} onClick={() => onNavigate('category', c.category)} />
+        <ChipLink icon={<Building2 size={11} />} label="Department" value={c.department} onClick={() => onNavigate('department', c.department)} />
+        <ChipLink icon={<User size={11} />} label="Owner" value={c.owner || '⚠ No owner'} onClick={c.owner ? () => onNavigate('owner', c.owner!) : undefined}
+          warn={!c.owner} />
+      </div>
+
+      {reasons.length > 0 && (
+        <div className="rounded-lg p-2.5 mt-3" style={{ background: `${RISK_COLORS[level]}08`, border: `1px solid ${RISK_COLORS[level]}20` }}>
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <AlertTriangle size={11} color={RISK_COLORS[level]} />
+            <span className="text-[9px] font-semibold tracking-wider" style={{ color: RISK_COLORS[level] }}>RISK FACTORS</span>
+          </div>
+          <div className="space-y-1">
+            {reasons.map((r, i) => (
+              <div key={i} className="text-[10px] flex items-start gap-1.5" style={{ color: '#94A3B8' }}>
+                <span style={{ color: RISK_COLORS[level] }}>•</span>{r}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EntityDetail({ node, nodes, onSelect }: {
+  node: GraphNode; nodes: GraphNode[]
+  onSelect: (n: GraphNode) => void
+}) {
+  return (
+    <div className="p-4">
+      <div className="mb-3">
+        <div className="text-[9px] uppercase tracking-wider mb-0.5" style={{ color: NODE_COLORS[node.type] }}>
+          {node.type}
+        </div>
+        <h2 className="font-semibold text-sm text-white">{node.name}</h2>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <MetricCard label="Total Spend" value={fmtK(node.value)} color="#38BDF8" />
+        <MetricCard label="Contracts" value={String(node.contracts.length)} color="#94A3B8" />
+      </div>
+
+      {['department', 'category', 'supplier', 'owner'].map(t => {
+        if (t === node.type) return null
+        const items = [...node.neighbors].filter(n => n.type === t)
+        if (items.length === 0) return null
+        return (
+          <div key={t} className="mb-3">
+            <div className="text-[9px] uppercase tracking-wider mb-1" style={{ color: '#475569' }}>{t}s</div>
+            <div className="flex flex-wrap gap-1">
+              {items.map(n => (
+                <button key={n.key}
+                  className="text-[10px] px-2 py-0.5 rounded-full cursor-pointer hover:text-[#E2E8F0] hover:border-[#38BDF8] transition-colors"
+                  style={{ background: '#0F172A', border: '1px solid #1E293B', color: '#94A3B8' }}
+                  onClick={() => onSelect(n)}>
+                  {n.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })}
+
+      <div>
+        <div className="text-[9px] uppercase tracking-wider mb-1.5" style={{ color: '#475569' }}>
+          Contracts ({node.contracts.length})
+        </div>
+        <div className="space-y-1">
+          {node.contracts.slice(0, 25).map(c => {
+            const cn = nodes.find(n => n.type === 'contract' && n.contract?.id === c.id)
+            const risk = cn ? riskScore(cn) : 0
+            const level = riskLevel(risk)
+            return (
+              <button key={c.id}
+                className="w-full text-left rounded-lg p-2 cursor-pointer hover:border-[#334155] transition-colors"
+                style={{ background: '#0A0F1A', border: '1px solid #1E293B' }}
+                onClick={() => { if (cn) onSelect(cn) }}>
+                <div className="flex items-start justify-between">
+                  <div className="text-[10px] font-medium text-white leading-tight">{c.name}</div>
+                  <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: RISK_COLORS[level], flexShrink: 0, marginTop: '3px' }} />
+                </div>
+                <div className="text-[9px] mt-0.5" style={{ color: '#64748B' }}>
+                  {c.supplier} · {fmtK(c.annualValue ?? 0)}
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function RiskBadge({ level, score }: { level: string; score: number }) {
+  const color = RISK_COLORS[level as keyof typeof RISK_COLORS]
+  const Icon = level === 'high' ? AlertTriangle : level === 'medium' ? Shield : ShieldCheck
+  return (
+    <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded"
+      style={{ background: `${color}15`, border: `1px solid ${color}30` }}>
+      <Icon size={10} color={color} />
+      <span className="text-[9px] font-semibold" style={{ color }}>{level.toUpperCase()} · {score}</span>
+    </div>
+  )
+}
+
+function MetricCard({ label, value, color }: { label: string; value: string; color: string }) {
+  return (
+    <div className="rounded-lg p-2" style={{ background: '#0A0F1A', border: '1px solid #1E293B' }}>
+      <div className="text-[8px] uppercase tracking-wider mb-0.5" style={{ color: '#475569' }}>{label}</div>
+      <div className="text-sm font-semibold tabular-nums" style={{ color }}>{value}</div>
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between py-1.5" style={{ borderBottom: '1px solid #0F172A' }}>
+      <span className="text-[10px]" style={{ color: '#64748B' }}>{label}</span>
+      <span className="text-[10px] text-white">{value}</span>
+    </div>
+  )
+}
+
+function StatRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-2 py-1.5" style={{ borderBottom: '1px solid #0F172A' }}>
+      <span style={{ color: '#475569' }}>{icon}</span>
+      <span className="flex-1 text-[10px]" style={{ color: '#64748B' }}>{label}</span>
+      <span className="text-[11px] font-semibold text-white tabular-nums">{value}</span>
+    </div>
+  )
+}
+
+function ChipLink({ icon, label, value, onClick, warn }: {
+  icon: React.ReactNode; label: string; value: string; onClick?: () => void; warn?: boolean
+}) {
+  return (
+    <div className="flex items-center gap-2">
+      <span style={{ color: '#475569' }}>{icon}</span>
+      <span className="text-[9px]" style={{ color: '#64748B' }}>{label}:</span>
+      {onClick ? (
+        <button className="text-[10px] cursor-pointer hover:underline transition-colors"
+          style={{ color: warn ? '#F59E0B' : '#38BDF8' }} onClick={onClick}>
+          {value}
+        </button>
+      ) : (
+        <span className="text-[10px]" style={{ color: warn ? '#F59E0B' : '#94A3B8' }}>{value}</span>
+      )}
     </div>
   )
 }

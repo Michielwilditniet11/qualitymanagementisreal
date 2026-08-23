@@ -1,12 +1,13 @@
-import { useRef, useMemo, useEffect } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Html } from '@react-three/drei'
+import { useRef, useMemo, useEffect, useCallback } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
+import { Stars, Grid, QuadraticBezierLine, Html, CameraControls as DreiCameraControls } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import { BlendFunction } from 'postprocessing'
 import * as THREE from 'three'
 import type { GraphNode, GraphLink } from '../data/types'
 import { nodeRadius, TYPE_LABELS } from './buildGraph'
 
+/* ─── Props ─── */
 interface Props {
   nodes: GraphNode[]
   links: GraphLink[]
@@ -18,14 +19,29 @@ interface Props {
   highlightExpiring: number
 }
 
-const NODE_COLORS: Record<string, string> = {
-  department: '#4da3ff',
-  category: '#f5a623',
-  supplier: '#e74c6f',
-  owner: '#50c878',
-  contract: '#a78bfa',
+/* ─── Constants ─── */
+const BG = '#020408'
+
+const TYPE_SHAPE: Record<string, string> = {
+  contract: 'sphere',
+  supplier: 'hexagon',
+  department: 'box',
+  category: 'octahedron',
+  owner: 'cone',
 }
 
+const TYPE_BASE_COLORS: Record<string, string> = {
+  department: '#94A3B8',
+  category: '#CBD5E1',
+  supplier: '#E2E8F0',
+  owner: '#F1F5F9',
+  contract: '#FFFFFF',
+}
+
+const EDGE_INACTIVE = '#334155'
+const EDGE_ACTIVE = '#38BDF8'
+
+/* ─── Risk ─── */
 function riskScore(node: GraphNode): number {
   if (node.type !== 'contract' || !node.contract) return 0
   const c = node.contract
@@ -35,21 +51,38 @@ function riskScore(node: GraphNode): number {
   if (c.endDate) {
     const days = (c.endDate.getTime() - Date.now()) / 86400000
     if (days < 0) score += 40
-    else if (days < 30) score += 25
-    else if (days < 90) score += 15
+    else if (days <= 30) score += 25
+    else if (days <= 90) score += 15
   }
   if (!c.annualValue || c.annualValue === 0) score += 10
-  if (c.autoRenew === undefined) score += 5
   return Math.min(100, score)
 }
 
-function riskColor(score: number): string {
-  if (score >= 40) return '#ef4444'
-  if (score >= 20) return '#f59e0b'
-  return '#22c55e'
+function riskLevel(score: number): 'high' | 'medium' | 'low' {
+  if (score >= 40) return 'high'
+  if (score >= 20) return 'medium'
+  return 'low'
 }
 
-/* ── Layout ── */
+const RISK_COLORS = { high: '#FF0055', medium: '#F59E0B', low: '#10B981' }
+
+function riskReasons(node: GraphNode): string[] {
+  if (node.type !== 'contract' || !node.contract) return []
+  const c = node.contract
+  const reasons: string[] = []
+  if (!c.owner) reasons.push('Missing contract owner')
+  if (!c.endDate) reasons.push('No end date defined')
+  if (c.endDate) {
+    const days = (c.endDate.getTime() - Date.now()) / 86400000
+    if (days < 0) reasons.push(`Expired ${Math.round(-days)}d ago`)
+    else if (days <= 30) reasons.push(`Expiring in ${Math.round(days)}d`)
+    else if (days <= 90) reasons.push(`Expiring in ${Math.round(days)}d`)
+  }
+  if (!c.annualValue || c.annualValue === 0) reasons.push('No annual value')
+  return reasons
+}
+
+/* ─── Layout ─── */
 function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<string, boolean>, spendThreshold: number) {
   const visible = nodes.filter(n => {
     if (!visibleTypes[n.type]) return false
@@ -60,24 +93,23 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
   const positions = new Map<string, THREE.Vector3>()
   for (const n of visible) {
     positions.set(n.key, new THREE.Vector3(
-      (Math.random() - 0.5) * 50,
+      (Math.random() - 0.5) * 55,
       (Math.random() - 0.5) * 30,
-      (Math.random() - 0.5) * 30,
+      (Math.random() - 0.5) * 35,
     ))
   }
   const maxValue = Math.max(1, ...visible.map(n => n.value))
   const velocities = new Map<string, THREE.Vector3>()
   for (const n of visible) velocities.set(n.key, new THREE.Vector3())
 
-  for (let iter = 0; iter < 200; iter++) {
-    const alpha = 1 - iter / 200
+  for (let iter = 0; iter < 220; iter++) {
+    const alpha = 1 - iter / 220
     for (let i = 0; i < visible.length; i++) {
       for (let j = i + 1; j < visible.length; j++) {
         const a = positions.get(visible[i].key)!, b = positions.get(visible[j].key)!
         const diff = new THREE.Vector3().subVectors(b, a)
         const d2 = Math.max(0.1, diff.lengthSq())
-        const force = 90 / d2 * alpha
-        diff.normalize().multiplyScalar(force)
+        diff.normalize().multiplyScalar(100 / d2 * alpha)
         velocities.get(visible[i].key)!.sub(diff)
         velocities.get(visible[j].key)!.add(diff)
       }
@@ -89,141 +121,187 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
       const d = Math.max(0.01, diff.length())
       const rA = nodeRadius(l.source, maxValue) * 0.06
       const rB = nodeRadius(l.target, maxValue) * 0.06
-      const target = 4 + rA + rB
-      const f = (d - target) * 0.04 * alpha
-      diff.normalize().multiplyScalar(f)
+      const target = 5 + rA + rB
+      diff.normalize().multiplyScalar((d - target) * 0.04 * alpha)
       velocities.get(l.source.key)!.add(diff)
       velocities.get(l.target.key)!.sub(diff)
     }
     for (const n of visible) {
       const pos = positions.get(n.key)!
       const vel = velocities.get(n.key)!
-      vel.add(pos.clone().negate().multiplyScalar(0.012 * alpha))
+      vel.add(pos.clone().negate().multiplyScalar(0.01 * alpha))
       pos.add(vel)
-      vel.multiplyScalar(0.78)
+      vel.multiplyScalar(0.76)
     }
   }
   return { positions, visible, visSet, maxValue }
 }
 
+/* ─── Format helpers ─── */
 function fmtK(v: number) {
-  return v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : `€${Math.round(v / 1000)}K`
+  return v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `€${Math.round(v / 1000)}K` : `€${Math.round(v)}`
 }
 
-/* ── Node ── */
-function NetNode({ node, position, radius, selected, highlighted, dimmed, expiring, searchMatch, onClick }: {
-  node: GraphNode; position: THREE.Vector3; radius: number; selected: boolean
-  highlighted: boolean; dimmed: boolean; expiring: boolean; searchMatch: boolean
-  onClick: () => void
-}) {
-  const glowRef = useRef<THREE.Mesh>(null!)
-  const ringRef = useRef<THREE.Mesh>(null!)
+function fmtDate(d?: Date) {
+  return d ? d.toISOString().slice(0, 10) : '—'
+}
 
-  const isContract = node.type === 'contract'
-  const risk = riskScore(node)
-  const baseColor = isContract ? riskColor(risk) : NODE_COLORS[node.type]
-  const isImportant = !isContract
+function daysDiff(d: Date): number {
+  return Math.round((d.getTime() - Date.now()) / 86400000)
+}
 
-  // Size encodes spend: bigger node = bigger spend
-  const spendScale = isContract
-    ? 0.3 + 0.7 * Math.sqrt((node.contract?.annualValue ?? 0) / 300000)
-    : 1
-  const sz = (isImportant ? radius * 0.06 : radius * 0.04) * spendScale
-  const baseOpacity = dimmed ? 0.08 : 1
+/* ─── Node geometry by type ─── */
+function NodeGeometry({ type, size }: { type: string; size: number }) {
+  switch (TYPE_SHAPE[type]) {
+    case 'hexagon':
+      return <cylinderGeometry args={[size * 0.9, size * 0.9, size * 0.3, 6]} />
+    case 'box':
+      return <boxGeometry args={[size * 1.2, size * 1.2, size * 1.2]} />
+    case 'octahedron':
+      return <octahedronGeometry args={[size * 0.85]} />
+    case 'cone':
+      return <coneGeometry args={[size * 0.7, size * 1.1, 8]} />
+    default:
+      return <sphereGeometry args={[size, 24, 24]} />
+  }
+}
+
+/* ─── Risk corona / halo ─── */
+function RiskCorona({ risk, size }: { risk: number; size: number }) {
+  const ref = useRef<THREE.Mesh>(null!)
+  const level = riskLevel(risk)
+  const color = RISK_COLORS[level]
 
   useFrame(({ clock }) => {
-    if (glowRef.current) {
-      const mat = glowRef.current.material as THREE.MeshBasicMaterial
-      mat.opacity = (dimmed ? 0.02 : selected ? 0.3 : highlighted ? 0.18 : 0.1)
-      glowRef.current.scale.setScalar(sz * (selected ? 4 : 2.5))
+    if (!ref.current) return
+    if (level === 'high') {
+      const pulse = 1 + Math.sin(clock.elapsedTime * 3) * 0.15
+      ref.current.scale.setScalar(pulse)
+      ;(ref.current.material as THREE.MeshBasicMaterial).opacity = 0.25 + Math.sin(clock.elapsedTime * 3) * 0.1
     }
-    if (ringRef.current) {
-      ringRef.current.rotation.z = clock.elapsedTime * 0.8
+  })
+
+  if (risk < 5) return null
+
+  return (
+    <mesh ref={ref}>
+      <sphereGeometry args={[size * (level === 'high' ? 2.0 : 1.6), 16, 16]} />
+      <meshBasicMaterial
+        color={color}
+        transparent
+        opacity={level === 'high' ? 0.2 : level === 'medium' ? 0.12 : 0.06}
+        side={THREE.BackSide}
+        depthWrite={false}
+      />
+    </mesh>
+  )
+}
+
+/* ─── High-risk wireframe shell ─── */
+function WireframeShell({ size }: { size: number }) {
+  const ref = useRef<THREE.Mesh>(null!)
+  useFrame(({ clock }) => {
+    if (ref.current) {
+      ref.current.rotation.y = clock.elapsedTime * 0.4
+      ref.current.rotation.x = clock.elapsedTime * 0.15
+    }
+  })
+  return (
+    <mesh ref={ref}>
+      <icosahedronGeometry args={[size * 2.2, 1]} />
+      <meshBasicMaterial color="#FF0055" wireframe transparent opacity={0.15} depthWrite={false} />
+    </mesh>
+  )
+}
+
+/* ─── Net Node ─── */
+function NetNode({ node, position, selected, highlighted, dimmed, expiring, searchMatch, maxValue, onClick }: {
+  node: GraphNode; position: THREE.Vector3; selected: boolean
+  highlighted: boolean; dimmed: boolean; expiring: boolean; searchMatch: boolean
+  maxValue: number; onClick: () => void
+}) {
+  const meshRef = useRef<THREE.Mesh>(null!)
+  const isContract = node.type === 'contract'
+  const risk = riskScore(node)
+  const level = riskLevel(risk)
+
+  const sz = isContract
+    ? 0.8 + 3.0 * Math.sqrt((node.contract?.annualValue ?? 0) / Math.max(1, maxValue))
+    : ({ department: 2.2, category: 1.8, supplier: 1.4, owner: 1.1 } as Record<string, number>)[node.type] || 1.2
+
+  const baseColor = TYPE_BASE_COLORS[node.type]
+  const emissiveIntensity = dimmed ? 0.05 : selected ? 1.0 : highlighted ? 0.6 : 0.3
+  const opacity = dimmed ? 0.1 : 1
+
+  useFrame(({ clock }) => {
+    if (meshRef.current && !isContract) {
+      meshRef.current.rotation.y = clock.elapsedTime * 0.3
     }
   })
 
   return (
     <group position={position}>
-      {/* Soft glow */}
-      <mesh ref={glowRef}>
-        <sphereGeometry args={[1, 12, 12]} />
-        <meshBasicMaterial color={baseColor} transparent opacity={0.1} side={THREE.BackSide} />
-      </mesh>
+      {/* Risk corona */}
+      {isContract && <RiskCorona risk={risk} size={sz} />}
 
-      {/* Core sphere */}
+      {/* High-risk wireframe */}
+      {isContract && level === 'high' && !dimmed && <WireframeShell size={sz} />}
+
+      {/* Core geometry */}
       <mesh
+        ref={meshRef}
         onClick={(e) => { e.stopPropagation(); onClick() }}
         onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer' }}
         onPointerOut={() => { document.body.style.cursor = 'auto' }}
       >
-        <sphereGeometry args={[sz, 20, 20]} />
+        <NodeGeometry type={node.type} size={sz} />
         <meshStandardMaterial
           color={baseColor}
-          emissive={baseColor}
-          emissiveIntensity={dimmed ? 0.1 : selected ? 1.2 : 0.6}
+          emissive={isContract ? RISK_COLORS[level] : baseColor}
+          emissiveIntensity={emissiveIntensity}
           transparent
-          opacity={baseOpacity}
-          roughness={0.3}
-          metalness={0.5}
+          opacity={opacity}
+          roughness={0.25}
+          metalness={0.6}
         />
       </mesh>
-
-      {/* Risk ring for high-risk contracts */}
-      {isContract && risk >= 40 && !dimmed && (
-        <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[sz * 2.2, 0.04, 8, 32]} />
-          <meshBasicMaterial color="#ef4444" transparent opacity={0.7} />
-        </mesh>
-      )}
 
       {/* Selection ring */}
       {(selected || searchMatch) && !dimmed && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[sz * 2.5, 0.03, 8, 48]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+          <torusGeometry args={[sz * 2.0, 0.06, 8, 48]} />
+          <meshBasicMaterial color="#38BDF8" transparent opacity={0.9} />
         </mesh>
       )}
 
-      {/* Expiring pulse */}
+      {/* Expiring pulse ring */}
       {expiring && !dimmed && <ExpiringPulse size={sz} />}
 
       {/* Label */}
-      {!dimmed && (highlighted || selected || isImportant) && (
-        <Html distanceFactor={35} center style={{ pointerEvents: 'none' }}>
+      {!dimmed && (highlighted || selected || !isContract) && (
+        <Html distanceFactor={40} center style={{ pointerEvents: 'none' }}>
           <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
-            marginTop: `${sz * 50 + 10}px`, marginLeft: `${sz * 20}px`,
+            display: 'flex', flexDirection: 'column', alignItems: 'center',
+            marginTop: `${sz * 22 + 16}px`,
           }}>
             <div style={{
-              color: selected ? '#ffffff' : '#b0c4de',
+              color: selected ? '#FFFFFF' : '#94A3B8',
               fontSize: selected ? '11px' : '9px',
-              fontFamily: "'Inter', -apple-system, sans-serif",
+              fontFamily: "'Inter', -apple-system, system-ui, sans-serif",
               fontWeight: selected ? 600 : 400,
               whiteSpace: 'nowrap',
-              textShadow: '0 1px 4px rgba(0,0,0,0.8)',
+              textShadow: '0 1px 6px rgba(0,0,0,0.9)',
+              letterSpacing: '0.3px',
             }}>
-              {node.name.length > 22 ? node.name.slice(0, 21) + '…' : node.name}
+              {node.name.length > 20 ? node.name.slice(0, 19) + '…' : node.name}
             </div>
-            {(selected || isImportant) && node.value > 0 && (
+            {node.value > 0 && (selected || !isContract) && (
               <div style={{
-                color: '#8ba5c0', fontSize: '8px',
+                color: '#64748B', fontSize: '8px',
                 fontFamily: "'Inter', sans-serif",
-                textShadow: '0 1px 3px rgba(0,0,0,0.6)',
+                textShadow: '0 1px 4px rgba(0,0,0,0.8)',
               }}>
-                {fmtK(node.value)} · {node.contracts.length} contracts
-              </div>
-            )}
-            {selected && isContract && risk > 0 && (
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: '4px',
-                marginTop: '2px', padding: '1px 6px', borderRadius: '3px',
-                background: risk >= 40 ? 'rgba(239,68,68,0.2)' : risk >= 20 ? 'rgba(245,158,11,0.2)' : 'rgba(34,197,94,0.2)',
-                border: `1px solid ${riskColor(risk)}40`,
-              }}>
-                <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: riskColor(risk) }} />
-                <span style={{ color: riskColor(risk), fontSize: '7px', fontFamily: "'Inter', sans-serif", fontWeight: 600 }}>
-                  RISK {risk}
-                </span>
+                {fmtK(node.value)}
               </div>
             )}
           </div>
@@ -237,61 +315,84 @@ function ExpiringPulse({ size }: { size: number }) {
   const ref = useRef<THREE.Mesh>(null!)
   useFrame(({ clock }) => {
     if (ref.current) {
-      const t = (clock.elapsedTime * 1.5) % 1
-      const scale = 1 + t * 2
-      ref.current.scale.setScalar(scale)
-      ;(ref.current.material as THREE.MeshBasicMaterial).opacity = (1 - t) * 0.5
+      const t = (clock.elapsedTime * 1.2) % 1
+      ref.current.scale.setScalar(1 + t * 1.5)
+      ;(ref.current.material as THREE.MeshBasicMaterial).opacity = (1 - t) * 0.4
     }
   })
   return (
     <mesh ref={ref} rotation={[Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[size * 1.8, size * 2.2, 32]} />
-      <meshBasicMaterial color="#f59e0b" transparent opacity={0.5} side={THREE.DoubleSide} />
+      <ringGeometry args={[size * 1.5, size * 1.8, 32]} />
+      <meshBasicMaterial color="#F59E0B" transparent opacity={0.4} side={THREE.DoubleSide} depthWrite={false} />
     </mesh>
   )
 }
 
-/* ── Edge ── */
-function Edge({ from, to, highlighted, dimmed, color, index }: {
-  from: THREE.Vector3; to: THREE.Vector3; highlighted: boolean; dimmed: boolean; color: string; index: number
+/* ─── Edges ─── */
+function GraphEdges({ links, positions, visSet, hlSet, selected }: {
+  links: GraphLink[]; positions: Map<string, THREE.Vector3>
+  visSet: Set<string>; hlSet: Set<string> | null; selected: GraphNode | null
 }) {
-  const { geometry } = useMemo(() => {
-    const mid = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5)
-    const dist = from.distanceTo(to)
-    const arcH = dist * 0.08 * (0.6 + Math.sin(index * 1.7) * 0.3)
-    mid.y += arcH * Math.cos(index * 0.9)
-    const curve = new THREE.QuadraticBezierCurve3(from, mid, to)
-    const thickness = highlighted ? 0.035 : 0.008
-    return { geometry: new THREE.TubeGeometry(curve, 20, thickness, 4, false) }
-  }, [from, to, highlighted, index])
+  return (
+    <>
+      {links.map((l, i) => {
+        if (!visSet.has(l.source.key) || !visSet.has(l.target.key)) return null
+        const from = positions.get(l.source.key)
+        const to = positions.get(l.target.key)
+        if (!from || !to) return null
+
+        const isActive = hlSet && (l.source === selected || l.target === selected)
+        const isDim = hlSet !== null && !isActive
+
+        const mid = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5)
+        mid.y += from.distanceTo(to) * 0.06
+
+        return (
+          <QuadraticBezierLine
+            key={i}
+            start={from}
+            mid={mid}
+            end={to}
+            color={isActive ? EDGE_ACTIVE : EDGE_INACTIVE}
+            lineWidth={isActive ? 2.2 : 0.8}
+            transparent
+            opacity={isDim ? 0.03 : isActive ? 0.9 : 0.18}
+            depthWrite={false}
+          />
+        )
+      })}
+    </>
+  )
+}
+
+/* ─── Camera controller ─── */
+function CameraRig({ target }: { target: THREE.Vector3 | null }) {
+  const ref = useRef<any>(null!)
+
+  useEffect(() => {
+    if (target && ref.current && ref.current.setLookAt) {
+      ref.current.setLookAt(
+        target.x + 12, target.y + 6, target.z + 12,
+        target.x, target.y, target.z,
+        true,
+      )
+    }
+  }, [target])
 
   return (
-    <mesh geometry={geometry}>
-      <meshBasicMaterial
-        color={color}
-        transparent
-        opacity={dimmed ? 0.03 : highlighted ? 0.6 : 0.15}
-        blending={THREE.NormalBlending}
-        depthWrite={false}
-      />
-    </mesh>
+    <DreiCameraControls
+      ref={ref}
+      minDistance={6}
+      maxDistance={100}
+      dollySpeed={0.5}
+      smoothTime={0.4}
+    />
   )
 }
 
-/* ── Subtle grid ── */
-function SubtleGrid() {
-  const grid = useMemo(() => {
-    const g = new THREE.GridHelper(120, 30, '#1a2a40', '#0d1825')
-    ;(g.material as THREE.Material).transparent = true
-    ;(g.material as THREE.Material).opacity = 0.08
-    return g
-  }, [])
-  return <primitive object={grid} position={[0, -22, 0]} />
-}
-
-/* ── Scene ── */
-function Scene(props: Props) {
-  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring } = props
+/* ─── Scene ─── */
+function Scene(props: Props & { onCameraTarget: (v: THREE.Vector3 | null) => void; cameraTarget: THREE.Vector3 | null }) {
+  const { nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold, highlightExpiring, onCameraTarget, cameraTarget } = props
   const { positions, visible, visSet, maxValue } = useMemo(
     () => layout3D(nodes, links, visibleTypes, spendThreshold),
     [nodes, links, visibleTypes, spendThreshold]
@@ -321,160 +422,228 @@ function Scene(props: Props) {
     return s
   }, [selected])
 
-  const { camera } = useThree()
   useEffect(() => {
     if (matchedNode) {
       const pos = positions.get(matchedNode.key)
       if (pos) {
-        camera.position.set(pos.x + 15, pos.y + 8, pos.z + 15)
-        camera.lookAt(pos)
+        onCameraTarget(pos)
         onSelect(matchedNode)
       }
     }
-  }, [matchedNode, positions, camera, onSelect])
+  }, [matchedNode])
+
+  const handleNodeClick = useCallback((n: GraphNode) => {
+    if (n === selected) {
+      onSelect(null)
+      onCameraTarget(null)
+    } else {
+      onSelect(n)
+      const pos = positions.get(n.key)
+      if (pos) onCameraTarget(pos)
+    }
+  }, [selected, positions, onSelect, onCameraTarget])
 
   return (
     <>
-      <ambientLight intensity={0.15} />
-      <directionalLight position={[30, 40, 20]} intensity={0.4} color="#e0e8f0" />
-      <pointLight position={[-20, 10, -15]} intensity={0.2} color="#4488cc" distance={80} />
+      {/* Lighting */}
+      <ambientLight intensity={0.08} />
+      <directionalLight position={[40, 50, 30]} intensity={0.35} color="#E0E8F0" />
+      <pointLight position={[-30, 20, -20]} intensity={0.15} color="#38BDF8" distance={100} />
+      <pointLight position={[20, -10, 30]} intensity={0.1} color="#64748B" distance={80} />
 
-      <SubtleGrid />
+      {/* Stars */}
+      <Stars radius={120} depth={60} count={800} factor={2} saturation={0} fade speed={0.3} />
 
-      {links.map((l, i) => {
-        if (!visSet.has(l.source.key) || !visSet.has(l.target.key)) return null
-        const from = positions.get(l.source.key)
-        const to = positions.get(l.target.key)
-        if (!from || !to) return null
-        const hl = hlSet && (l.source === selected || l.target === selected)
-        const dim = hlSet !== null && !hl
-        const c = NODE_COLORS[l.source.type] ?? '#4488aa'
-        return <Edge key={i} from={from} to={to} highlighted={!!hl} dimmed={dim} color={c} index={i} />
-      })}
+      {/* Coordinate grid */}
+      <Grid
+        position={[0, -18, 0]}
+        args={[160, 160]}
+        cellSize={4}
+        cellThickness={0.3}
+        cellColor="#0F172A"
+        sectionSize={20}
+        sectionThickness={0.5}
+        sectionColor="#1E293B"
+        fadeDistance={80}
+        fadeStrength={1.5}
+        infiniteGrid
+      />
 
+      {/* Edges */}
+      <GraphEdges links={links} positions={positions} visSet={visSet} hlSet={hlSet} selected={selected} />
+
+      {/* Nodes */}
       {visible.map(n => {
         const pos = positions.get(n.key)
         if (!pos) return null
-        const r = nodeRadius(n, maxValue)
         const isSel = selected === n
         const isHl = hlSet?.has(n.key) ?? false
         const isDim = hlSet !== null && !isHl
         return (
           <NetNode
-            key={n.key} node={n} position={pos} radius={r}
+            key={n.key} node={n} position={pos}
             selected={isSel} highlighted={isHl} dimmed={isDim}
             expiring={expiringSet.has(n.key)} searchMatch={matchedNode === n}
-            onClick={() => onSelect(n === selected ? null : n)}
+            maxValue={maxValue}
+            onClick={() => handleNodeClick(n)}
           />
         )
       })}
 
-      <OrbitControls
-        enableDamping dampingFactor={0.08}
-        minDistance={8} maxDistance={90}
-        autoRotate autoRotateSpeed={0.08}
-        zoomSpeed={0.8}
-      />
+      <CameraRig target={cameraTarget} />
 
       <EffectComposer multisampling={4}>
-        <Bloom intensity={0.8} luminanceThreshold={0.4} luminanceSmoothing={0.9} mipmapBlur />
-        <Vignette offset={0.25} darkness={0.45} blendFunction={BlendFunction.NORMAL} />
+        <Bloom intensity={0.45} luminanceThreshold={0.88} luminanceSmoothing={0.9} mipmapBlur />
+        <Vignette offset={0.3} darkness={0.5} blendFunction={BlendFunction.NORMAL} />
       </EffectComposer>
     </>
   )
 }
 
+/* ─── Exported wrapper ─── */
 export default function PlanetaryWeb(props: Props) {
-  const totalSpend = props.nodes
-    .filter(n => n.type === 'contract')
-    .reduce((s, n) => s + (n.contract?.annualValue ?? 0), 0)
+  const { nodes, onSelect } = props
+  const camTargetRef = useRef<THREE.Vector3 | null>(null)
 
-  const riskCounts = useMemo(() => {
-    let high = 0, medium = 0, low = 0
-    for (const n of props.nodes) {
+  const handleCameraTarget = useCallback((v: THREE.Vector3 | null) => {
+    camTargetRef.current = v
+  }, [])
+
+  /* ─── Risk stats ─── */
+  const riskStats = useMemo(() => {
+    let high = 0, medium = 0, low = 0, totalAtRisk = 0, orphan = 0
+    for (const n of nodes) {
       if (n.type !== 'contract') continue
       const r = riskScore(n)
-      if (r >= 40) high++
-      else if (r >= 20) medium++
+      if (r >= 40) { high++; totalAtRisk += n.contract?.annualValue ?? 0 }
+      else if (r >= 20) { medium++; totalAtRisk += n.contract?.annualValue ?? 0 }
       else low++
+      if (!n.contract?.owner) orphan++
     }
-    return { high, medium, low }
-  }, [props.nodes])
+    return { high, medium, low, totalAtRisk, orphan }
+  }, [nodes])
+
+  const totalSpend = useMemo(() =>
+    nodes.filter(n => n.type === 'contract').reduce((s, n) => s + (n.contract?.annualValue ?? 0), 0),
+    [nodes]
+  )
 
   return (
-    <div className="flex-1 relative overflow-hidden" style={{ background: '#0a1020' }}>
+    <div className="flex-1 relative overflow-hidden" style={{ background: BG }}>
       <Canvas
-        camera={{ position: [30, 18, 30], fov: 50, near: 0.1, far: 300 }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.2 } as any}
+        camera={{ position: [35, 22, 35], fov: 48, near: 0.1, far: 400 }}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.1 } as any}
         dpr={[1, 2]}
-        onPointerMissed={() => props.onSelect(null)}
+        onPointerMissed={() => onSelect(null)}
       >
-        <color attach="background" args={['#0a1020']} />
-        <fog attach="fog" args={['#0a1020', 60, 120]} />
-        <Scene {...props} />
+        <color attach="background" args={[BG]} />
+        <fog attach="fog" args={[BG, 70, 150]} />
+        <Scene {...props} onCameraTarget={handleCameraTarget} cameraTarget={camTargetRef.current} />
       </Canvas>
 
-      {/* ─── Legend: Node types ─── */}
-      <div className="absolute top-3 left-3 rounded-lg p-3 pointer-events-none"
-        style={{ background: 'rgba(10,16,32,0.9)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)' }}>
-        <div style={{ color: '#8ba5c0', fontSize: '10px', fontWeight: 600, letterSpacing: '0.5px', marginBottom: '8px', fontFamily: "'Inter', sans-serif" }}>
-          NODE TYPES
-        </div>
-        {Object.entries(TYPE_LABELS).map(([t, label]) => {
-          const count = props.nodes.filter(n => n.type === t).length
-          return (
-            <label key={t} className="flex items-center gap-2 cursor-pointer" style={{ marginBottom: '4px' }}>
-              <input type="checkbox" checked={props.visibleTypes[t]} readOnly className="accent-[#4da3ff]" data-type={t}
-                style={{ width: '11px', height: '11px' }} />
-              <span style={{
-                width: '7px', height: '7px', borderRadius: '50%', display: 'inline-block',
-                background: NODE_COLORS[t],
-              }} />
-              <span style={{ color: '#7a94b0', fontSize: '10px', flex: 1, fontFamily: "'Inter', sans-serif" }}>{label}</span>
-              <span style={{ color: '#4a6a8a', fontSize: '10px', fontFamily: "'Inter', sans-serif" }}>{count}</span>
-            </label>
-          )
-        })}
-      </div>
-
-      {/* ─── Risk summary ─── */}
-      <div className="absolute top-3 right-3 rounded-lg p-3 pointer-events-none"
-        style={{ background: 'rgba(10,16,32,0.9)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', minWidth: '140px' }}>
-        <div style={{ color: '#8ba5c0', fontSize: '10px', fontWeight: 600, letterSpacing: '0.5px', marginBottom: '8px', fontFamily: "'Inter', sans-serif" }}>
+      {/* ─── HUD: Top-right risk summary ─── */}
+      <div className="absolute top-3 right-3 rounded-lg p-3"
+        style={{ background: 'rgba(2,4,8,0.85)', border: '1px solid rgba(56,189,248,0.12)', backdropFilter: 'blur(12px)', minWidth: '170px', pointerEvents: 'none' }}>
+        <div className="text-[10px] font-semibold tracking-wider mb-2" style={{ color: '#64748B', fontFamily: "'Inter', sans-serif" }}>
           RISK OVERVIEW
         </div>
         {[
-          { label: 'High risk', count: riskCounts.high, color: '#ef4444' },
-          { label: 'Medium risk', count: riskCounts.medium, color: '#f59e0b' },
-          { label: 'Low risk', count: riskCounts.low, color: '#22c55e' },
+          { label: 'High risk', count: riskStats.high, color: RISK_COLORS.high },
+          { label: 'Medium risk', count: riskStats.medium, color: RISK_COLORS.medium },
+          { label: 'Low risk', count: riskStats.low, color: RISK_COLORS.low },
         ].map(({ label, count, color }) => (
-          <div key={label} className="flex items-center gap-2" style={{ marginBottom: '3px' }}>
-            <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: color }} />
-            <span style={{ color: '#7a94b0', fontSize: '10px', flex: 1, fontFamily: "'Inter', sans-serif" }}>{label}</span>
-            <span style={{ color, fontSize: '11px', fontWeight: 600, fontFamily: "'Inter', sans-serif" }}>{count}</span>
+          <div key={label} className="flex items-center gap-2 mb-1">
+            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: color, boxShadow: `0 0 6px ${color}40` }} />
+            <span className="flex-1 text-[10px]" style={{ color: '#94A3B8', fontFamily: "'Inter', sans-serif" }}>{label}</span>
+            <span className="text-[11px] font-semibold tabular-nums" style={{ color, fontFamily: "'Inter', sans-serif" }}>{count}</span>
           </div>
         ))}
-        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', marginTop: '6px', paddingTop: '6px' }}>
-          <div className="flex justify-between" style={{ fontFamily: "'Inter', sans-serif" }}>
-            <span style={{ color: '#5a7a9a', fontSize: '9px' }}>Total spend</span>
-            <span style={{ color: '#b0c4de', fontSize: '10px', fontWeight: 600 }}>{fmtK(totalSpend)}</span>
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="flex justify-between text-[9px]" style={{ fontFamily: "'Inter', sans-serif" }}>
+            <span style={{ color: '#475569' }}>Spend at risk</span>
+            <span className="font-semibold" style={{ color: '#FF0055' }}>{fmtK(riskStats.totalAtRisk)}</span>
+          </div>
+          <div className="flex justify-between text-[9px] mt-0.5" style={{ fontFamily: "'Inter', sans-serif" }}>
+            <span style={{ color: '#475569' }}>Orphan contracts</span>
+            <span className="font-semibold" style={{ color: '#F59E0B' }}>{riskStats.orphan}</span>
+          </div>
+          <div className="flex justify-between text-[9px] mt-0.5" style={{ fontFamily: "'Inter', sans-serif" }}>
+            <span style={{ color: '#475569' }}>Total spend</span>
+            <span className="font-semibold" style={{ color: '#E2E8F0' }}>{fmtK(totalSpend)}</span>
           </div>
         </div>
       </div>
 
-      {/* ─── Size legend ─── */}
-      <div className="absolute bottom-3 left-3 rounded-lg px-3 py-2 pointer-events-none"
-        style={{ background: 'rgba(10,16,32,0.9)', border: '1px solid rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)' }}>
-        <div style={{ color: '#5a7a9a', fontSize: '8px', fontFamily: "'Inter', sans-serif", letterSpacing: '0.5px' }}>
-          NODE SIZE = SPEND · COLOR = RISK LEVEL
+      {/* ─── HUD: Top-left legend ─── */}
+      <div className="absolute top-3 left-3 rounded-lg p-3"
+        style={{ background: 'rgba(2,4,8,0.85)', border: '1px solid rgba(56,189,248,0.08)', backdropFilter: 'blur(12px)' }}>
+        <div className="text-[10px] font-semibold tracking-wider mb-2" style={{ color: '#64748B', fontFamily: "'Inter', sans-serif" }}>
+          NODE TYPES
+        </div>
+        {Object.entries(TYPE_LABELS).map(([t, label]) => {
+          const count = nodes.filter(n => n.type === t).length
+          return (
+            <label key={t} className="flex items-center gap-2 cursor-pointer mb-1">
+              <input type="checkbox" checked={props.visibleTypes[t]} readOnly data-type={t}
+                className="accent-[#38BDF8]" style={{ width: '11px', height: '11px' }} />
+              <span style={{
+                width: '7px', height: '7px', display: 'inline-block',
+                background: TYPE_BASE_COLORS[t],
+                borderRadius: t === 'contract' ? '50%' : t === 'department' ? '2px' : t === 'category' ? '1px' : '50%',
+                transform: t === 'category' ? 'rotate(45deg) scale(0.8)' : undefined,
+              }} />
+              <span className="flex-1 text-[10px]" style={{ color: '#94A3B8', fontFamily: "'Inter', sans-serif" }}>{label}</span>
+              <span className="text-[10px] tabular-nums" style={{ color: '#475569', fontFamily: "'Inter', sans-serif" }}>{count}</span>
+            </label>
+          )
+        })}
+
+        {/* Spend scale */}
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="text-[8px] tracking-wider mb-1.5" style={{ color: '#475569', fontFamily: "'Inter', sans-serif" }}>
+            SPEND SCALE
+          </div>
+          <div className="flex items-end gap-1.5">
+            {[4, 7, 11, 16].map((s, i) => (
+              <div key={i} className="flex flex-col items-center gap-0.5">
+                <div style={{ width: s, height: s, borderRadius: '50%', background: '#E2E8F0', opacity: 0.7 }} />
+              </div>
+            ))}
+            <span className="text-[7px] ml-1" style={{ color: '#475569', fontFamily: "'Inter', sans-serif" }}>
+              Low → High
+            </span>
+          </div>
+        </div>
+
+        {/* Risk encoding */}
+        <div className="mt-2 pt-2" style={{ borderTop: '1px solid rgba(148,163,184,0.08)' }}>
+          <div className="text-[8px] tracking-wider mb-1" style={{ color: '#475569', fontFamily: "'Inter', sans-serif" }}>
+            RISK ENCODING
+          </div>
+          <div className="flex items-center gap-3">
+            {[
+              { color: RISK_COLORS.high, label: 'High' },
+              { color: RISK_COLORS.medium, label: 'Med' },
+              { color: RISK_COLORS.low, label: 'Low' },
+            ].map(({ color, label }) => (
+              <div key={label} className="flex items-center gap-1">
+                <div style={{ width: '5px', height: '5px', borderRadius: '50%', background: color, boxShadow: `0 0 4px ${color}60` }} />
+                <span className="text-[7px]" style={{ color: '#64748B', fontFamily: "'Inter', sans-serif" }}>{label}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
-      {/* ─── Controls hint ─── */}
-      <div className="absolute bottom-3 right-3 pointer-events-none"
-        style={{ color: '#3a5070', fontSize: '9px', fontFamily: "'Inter', sans-serif" }}>
-        Orbit · Zoom · Click to inspect
+      {/* ─── HUD: Bottom-right controls hint ─── */}
+      <div className="absolute bottom-3 right-3" style={{ pointerEvents: 'none' }}>
+        <span className="text-[9px]" style={{ color: '#334155', fontFamily: "'Inter', sans-serif" }}>
+          Orbit · Zoom · Click to inspect
+        </span>
       </div>
     </div>
   )
 }
+
+/* ─── Export risk utilities for WebScreen ─── */
+export { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff }
