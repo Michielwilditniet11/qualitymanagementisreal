@@ -96,6 +96,55 @@ Labels render on a backing plate at a constant on-screen size, so they stay
 readable however far the camera pulls back to frame the neighbourhood. The
 drawer's chips carry the same relationship colours as the graph.
 
+## Diagnostics
+
+Diagnostics is prescriptive, not descriptive: it answers what to do, with whom,
+and by when.
+
+**Action strip** — addressable savings (a range), open negotiation windows,
+critical term findings, and the next act-by date.
+
+**What to act on** — every decision date in the next 12 months, soonest first.
+Notice deadlines are listed as their own events, because that is when the
+decision actually has to be made; a deadline already passed on a live
+auto-renewing contract shows as *missed*. Supplier names link through to the
+Spider Web.
+
+**Where the money could come from** — tail-supplier consolidation, bundling in
+fragmented categories, payment-terms harmonisation and renewal interception.
+Every figure is a range with its assumption printed beneath it. The total
+attributes each contract to the single highest rate claiming it, so overlapping
+opportunities cannot inflate it past total spend.
+
+**Supplier leverage** — our position against each supplier (strong when a
+renewal window is open and a credible alternative exists, weak when
+sole-sourced), the next act-by countdown, and the levers available: the anchor
+renewal window, consolidating separate agreements, co-terming scattered end
+dates, competitive tension from suppliers already in the category, and
+harmonising to payment terms the supplier already accepts elsewhere.
+
+**Terms & conditions audit** — nine detectors over the contract paper:
+
+1. Auto-renewal with no notice period recorded — the decision date is unknown,
+   not distant.
+2. Notice window already closed on a live auto-renewing contract.
+3. Supplier-friendly notice periods (120 days or more), escalated when the
+   supplier is sole-sourced.
+4. Notice periods of 30 days or less on top-quartile spend — not enough time to
+   run an alternative.
+5. Terms of three years or more that renew themselves.
+6. One supplier paid on several different payment terms.
+7. Paying faster than the conventional 30-day floor.
+8. Indexation or unilateral-change keywords found in unmapped source columns —
+   flagged as *review manually*, never as a conclusion.
+9. A register that contradicts itself on status versus end date.
+
+**Cuts of the portfolio** — risk against spend (the top-right corner is large
+and exposed), renewal load by quarter, and a department-by-category heatmap.
+Payment-terms analysis appears only when enough spend carries readable terms;
+otherwise the tab says so rather than drawing a misleading chart. The original
+charts and per-entity health cards remain under *Classic views*.
+
 ## Renewal timeline
 
 The Calendar tab is a timeline, not a list. Each contract is one row with a bar

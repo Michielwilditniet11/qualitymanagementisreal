@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useDataStore } from '../../store/dataStore'
+import { useUIStore } from '../../store/uiStore'
 import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
 import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmtDate, daysDiff } from '../../graph/PlanetaryWeb'
 import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight } from 'lucide-react'
@@ -24,6 +25,20 @@ export default function WebScreen() {
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
   const insights = useMemo(() => generateInsights(contracts), [contracts])
+
+  // Another screen (Diagnostics) asked for a node to be inspected here.
+  const pendingSelection = useUIStore(s => s.pendingSelection)
+  const clearPendingSelection = useUIStore(s => s.clearPendingSelection)
+  useEffect(() => {
+    if (!pendingSelection) return
+    const n = nodes.find(x => x.type === pendingSelection.type && x.name === pendingSelection.name)
+    if (n) {
+      setSelected(n)
+      setActiveInsight(null)
+      setFocusNode(null)
+    }
+    clearPendingSelection()
+  }, [pendingSelection, nodes, clearPendingSelection])
 
   const highlightKeys = useMemo(() => {
     if (!activeInsight) return null
