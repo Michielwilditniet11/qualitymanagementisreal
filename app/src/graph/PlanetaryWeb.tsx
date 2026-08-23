@@ -19,93 +19,68 @@ interface Props {
 }
 
 const GLOW_COLORS: Record<string, string> = {
-  department: '#00ccff',
+  department: '#00bbff',
   category: '#ffaa00',
-  supplier: '#ff4488',
-  owner: '#44ff88',
-  contract: '#aa66ff',
+  supplier: '#ff3366',
+  owner: '#33ff88',
+  contract: '#8866ff',
 }
 
-/* ── Custom GLSL: Energy flow shader for edges ── */
-const edgeVertexShader = `
+/* ── GLSL: Energy-flow edge ── */
+const edgeVert = `
   varying vec2 vUv;
   void main() {
     vUv = uv;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `
-const edgeFragmentShader = `
+const edgeFrag = `
   uniform float uTime;
   uniform vec3 uColor;
   uniform float uOpacity;
   uniform float uHighlighted;
   varying vec2 vUv;
-
   void main() {
-    // Animated energy pulse traveling along the edge
-    float pulse = sin(vUv.x * 12.0 - uTime * 3.0) * 0.5 + 0.5;
-    float pulse2 = sin(vUv.x * 20.0 - uTime * 5.0) * 0.5 + 0.5;
-
-    // Edge glow falloff from center
+    float pulse = sin(vUv.x * 15.0 - uTime * 4.0) * 0.5 + 0.5;
+    float pulse2 = sin(vUv.x * 25.0 - uTime * 6.0) * 0.5 + 0.5;
     float edgeFade = 1.0 - abs(vUv.y - 0.5) * 2.0;
-    edgeFade = pow(edgeFade, 1.5);
-
-    // Combine: base glow + traveling energy pulses
-    float baseBright = 0.3 + uHighlighted * 0.4;
-    float energy = baseBright + pulse * 0.35 + pulse2 * 0.15;
+    edgeFade = pow(edgeFade, 1.2);
+    float energy = (0.4 + uHighlighted * 0.3) + pulse * 0.3 + pulse2 * 0.1;
     energy *= edgeFade;
-
-    // Hot white core along center
-    float core = smoothstep(0.35, 0.5, edgeFade) * 0.4;
-
-    vec3 col = mix(uColor, vec3(1.0), core * uHighlighted);
+    float core = smoothstep(0.3, 0.5, edgeFade) * 0.5;
+    vec3 col = mix(uColor, vec3(1.0), core * (0.3 + uHighlighted * 0.5));
     gl_FragColor = vec4(col * energy, energy * uOpacity);
   }
 `
 
-/* ── Custom GLSL: Fresnel rim-light shader for nodes ── */
-const nodeVertexShader = `
+/* ── GLSL: Hot-point node ── */
+const nodeVert = `
   varying vec3 vNormal;
   varying vec3 vViewDir;
-  varying vec2 vUv;
   void main() {
-    vUv = uv;
     vNormal = normalize(normalMatrix * normal);
     vec4 mvPos = modelViewMatrix * vec4(position, 1.0);
     vViewDir = normalize(-mvPos.xyz);
     gl_Position = projectionMatrix * mvPos;
   }
 `
-const nodeFragmentShader = `
+const nodeFrag = `
   uniform vec3 uColor;
   uniform float uTime;
-  uniform float uSelected;
+  uniform float uIntensity;
   uniform float uOpacity;
   varying vec3 vNormal;
   varying vec3 vViewDir;
-  varying vec2 vUv;
-
   void main() {
-    // Fresnel rim glow
     float rim = 1.0 - max(dot(vNormal, vViewDir), 0.0);
-    rim = pow(rim, 2.5);
-
-    // Inner core brightness
+    rim = pow(rim, 2.0);
     float core = max(dot(vNormal, vViewDir), 0.0);
-    core = pow(core, 3.0) * 0.6;
-
-    // Pulse animation
-    float pulse = 1.0 + sin(uTime * 3.0) * 0.1;
-
-    // Combine: bright center + glowing rim
-    float brightness = (core + rim * 1.2) * pulse;
-    brightness = brightness * (0.8 + uSelected * 0.6);
-
-    vec3 rimColor = mix(uColor, vec3(1.0), 0.3);
-    vec3 col = mix(uColor * core, rimColor, rim);
-    col += vec3(1.0) * core * 0.3; // white hot center
-
-    gl_FragColor = vec4(col * brightness, (0.4 + rim * 0.6 + core * 0.4) * uOpacity);
+    core = pow(core, 2.0);
+    float pulse = 1.0 + sin(uTime * 3.5) * 0.08;
+    // White-hot center that fades to color at rim
+    vec3 col = mix(vec3(1.0, 1.0, 1.0), uColor, rim * 0.8);
+    float brightness = (core * 1.5 + rim * 0.8) * pulse * uIntensity;
+    gl_FragColor = vec4(col * brightness, (core * 0.8 + rim * 0.5) * uOpacity);
   }
 `
 
@@ -123,7 +98,7 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
       positions.set(n.key, new THREE.Vector3(
         (Math.random() - 0.5) * 50,
         (Math.random() - 0.5) * 50,
-        (Math.random() - 0.5) * 50,
+        (Math.random() - 0.5) * 30,
       ))
     }
   }
@@ -131,14 +106,14 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
   const velocities = new Map<string, THREE.Vector3>()
   for (const n of visible) velocities.set(n.key, new THREE.Vector3())
 
-  for (let iter = 0; iter < 150; iter++) {
-    const alpha = 1 - iter / 150
+  for (let iter = 0; iter < 180; iter++) {
+    const alpha = 1 - iter / 180
     for (let i = 0; i < visible.length; i++) {
       for (let j = i + 1; j < visible.length; j++) {
         const a = positions.get(visible[i].key)!, b = positions.get(visible[j].key)!
         const diff = new THREE.Vector3().subVectors(b, a)
         const d2 = Math.max(0.1, diff.lengthSq())
-        const force = 100 / d2 * alpha
+        const force = 80 / d2 * alpha
         diff.normalize().multiplyScalar(force)
         velocities.get(visible[i].key)!.sub(diff)
         velocities.get(visible[j].key)!.add(diff)
@@ -149,10 +124,10 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
       const a = positions.get(l.source.key)!, b = positions.get(l.target.key)!
       const diff = new THREE.Vector3().subVectors(b, a)
       const d = Math.max(0.01, diff.length())
-      const rA = nodeRadius(l.source, maxValue) * 0.15
-      const rB = nodeRadius(l.target, maxValue) * 0.15
-      const target = 4 + rA + rB
-      const f = (d - target) * 0.03 * alpha
+      const rA = nodeRadius(l.source, maxValue) * 0.08
+      const rB = nodeRadius(l.target, maxValue) * 0.08
+      const target = 3 + rA + rB
+      const f = (d - target) * 0.04 * alpha
       diff.normalize().multiplyScalar(f)
       velocities.get(l.source.key)!.add(diff)
       velocities.get(l.target.key)!.sub(diff)
@@ -160,9 +135,9 @@ function layout3D(nodes: GraphNode[], links: GraphLink[], visibleTypes: Record<s
     for (const n of visible) {
       const pos = positions.get(n.key)!
       const vel = velocities.get(n.key)!
-      vel.add(pos.clone().negate().multiplyScalar(0.008 * alpha))
+      vel.add(pos.clone().negate().multiplyScalar(0.01 * alpha))
       pos.add(vel)
-      vel.multiplyScalar(0.78)
+      vel.multiplyScalar(0.76)
     }
   }
   return { positions, visible, visSet, maxValue }
@@ -172,71 +147,61 @@ function fmtK(v: number) {
   return v >= 1000000 ? `€${(v / 1000000).toFixed(1)}M` : `€${Math.round(v / 1000)}K`
 }
 
-/* ── Fresnel-lit node with glow layers ── */
-function GlowNode({ node, position, radius, selected, highlighted, dimmed, expiring, searchMatch, onClick }: {
+/* ── Node component: tiny white-hot point with glow halo ── */
+function NetNode({ node, position, radius, selected, highlighted, dimmed, expiring, searchMatch, onClick }: {
   node: GraphNode; position: THREE.Vector3; radius: number; selected: boolean
   highlighted: boolean; dimmed: boolean; expiring: boolean; searchMatch: boolean
   onClick: () => void
 }) {
   const shaderRef = useRef<THREE.ShaderMaterial>(null!)
-  const outerRef = useRef<THREE.Mesh>(null!)
-  const ringRef = useRef<THREE.Mesh>(null!)
-  const ring2Ref = useRef<THREE.Mesh>(null!)
+  const glowRef = useRef<THREE.Mesh>(null!)
 
-  const color = new THREE.Color(GLOW_COLORS[node.type])
-  const baseOpacity = dimmed ? 0.04 : 1
-  const isImportant = node.type !== 'contract'
-  const coreSize = isImportant ? radius * 0.06 : radius * 0.035
   const colorHex = GLOW_COLORS[node.type]
+  const color = new THREE.Color(colorHex)
+  const baseOpacity = dimmed ? 0.03 : 1
+  const isImportant = node.type !== 'contract'
+  const sz = isImportant ? radius * 0.045 : radius * 0.025
 
   const uniforms = useMemo(() => ({
     uColor: { value: color },
     uTime: { value: 0 },
-    uSelected: { value: selected ? 1.0 : 0.0 },
+    uIntensity: { value: 1.0 },
     uOpacity: { value: baseOpacity },
   }), [])
 
   useFrame(({ clock }) => {
     if (shaderRef.current) {
-      shaderRef.current.uniforms.uTime.value = clock.elapsedTime + position.x * 0.5
-      shaderRef.current.uniforms.uSelected.value = selected ? 1.0 : highlighted ? 0.6 : 0.0
+      shaderRef.current.uniforms.uTime.value = clock.elapsedTime + position.x
+      shaderRef.current.uniforms.uIntensity.value = dimmed ? 0.15 : selected ? 2.0 : highlighted ? 1.5 : 1.0
       shaderRef.current.uniforms.uOpacity.value = baseOpacity
     }
-    if (outerRef.current) {
-      const mat = outerRef.current.material as THREE.MeshBasicMaterial
-      const pulse = 1 + Math.sin(clock.elapsedTime * 2 + position.x) * 0.15
-      mat.opacity = (dimmed ? 0.015 : selected ? 0.25 : highlighted ? 0.15 : 0.08) * pulse
-      outerRef.current.scale.setScalar(coreSize * (selected ? 6 : 3.5) * pulse)
-    }
-    if (ringRef.current) {
-      ringRef.current.rotation.z = clock.elapsedTime * 1.2
-      ringRef.current.rotation.x = Math.sin(clock.elapsedTime * 0.5) * 0.3 + Math.PI / 3
-    }
-    if (ring2Ref.current) {
-      ring2Ref.current.rotation.z = -clock.elapsedTime * 0.8
-      ring2Ref.current.rotation.x = Math.cos(clock.elapsedTime * 0.7) * 0.4 + Math.PI / 4
+    if (glowRef.current) {
+      const pulse = 1 + Math.sin(clock.elapsedTime * 2.5 + position.x) * 0.12
+      const mat = glowRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = (dimmed ? 0.01 : selected ? 0.4 : highlighted ? 0.25 : 0.15) * pulse
+      glowRef.current.scale.setScalar(sz * (selected ? 5 : 3) * pulse)
     }
   })
 
   return (
     <group position={position}>
-      {/* Volumetric outer glow */}
-      <mesh ref={outerRef}>
-        <sphereGeometry args={[1, 16, 16]} />
-        <meshBasicMaterial color={colorHex} transparent opacity={0.08} side={THREE.BackSide} />
+      {/* Glow halo */}
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[1, 12, 12]} />
+        <meshBasicMaterial color={colorHex} transparent opacity={0.15} side={THREE.BackSide} />
       </mesh>
 
-      {/* Fresnel-lit core sphere */}
+      {/* Core point */}
       <mesh
         onClick={(e) => { e.stopPropagation(); onClick() }}
         onPointerOver={(e) => { e.stopPropagation(); document.body.style.cursor = 'pointer' }}
         onPointerOut={() => { document.body.style.cursor = 'auto' }}
       >
-        <sphereGeometry args={[coreSize, 32, 32]} />
+        <sphereGeometry args={[sz, 16, 16]} />
         <shaderMaterial
           ref={shaderRef}
-          vertexShader={nodeVertexShader}
-          fragmentShader={nodeFragmentShader}
+          vertexShader={nodeVert}
+          fragmentShader={nodeFrag}
           uniforms={uniforms}
           transparent
           blending={THREE.AdditiveBlending}
@@ -244,70 +209,73 @@ function GlowNode({ node, position, radius, selected, highlighted, dimmed, expir
         />
       </mesh>
 
-      {/* Selection double rings */}
+      {/* Selection ring */}
       {(selected || searchMatch) && !dimmed && (
-        <>
-          <mesh ref={ringRef}>
-            <torusGeometry args={[coreSize * 3.5, 0.035, 12, 64]} />
-            <meshBasicMaterial color={searchMatch ? '#ffffff' : colorHex} transparent opacity={0.7} />
-          </mesh>
-          <mesh ref={ring2Ref}>
-            <torusGeometry args={[coreSize * 4.5, 0.02, 12, 64]} />
-            <meshBasicMaterial color={searchMatch ? '#ffffff' : colorHex} transparent opacity={0.35} />
-          </mesh>
-        </>
+        <SelectionRing size={sz} color={searchMatch ? '#ffffff' : colorHex} />
       )}
 
-      {/* Wireframe icosahedron shell for important nodes */}
-      {isImportant && !dimmed && (
-        <mesh rotation={[0.3, 0.5, 0]}>
-          <icosahedronGeometry args={[coreSize * 3, 1]} />
-          <meshBasicMaterial color={colorHex} transparent opacity={selected ? 0.15 : 0.05} wireframe />
-        </mesh>
-      )}
+      {/* Expiring pulse */}
+      {expiring && !dimmed && <ExpiringPulse size={sz} />}
 
-      {/* Expiring warning */}
-      {expiring && !dimmed && <ExpiringPulse size={coreSize} />}
-
-      {/* Data label */}
+      {/* Label — always show for non-contract, positioned right next to node */}
       {!dimmed && (highlighted || selected || isImportant) && (
-        <Html distanceFactor={28} center style={{ pointerEvents: 'none' }}>
+        <Html distanceFactor={30} center style={{ pointerEvents: 'none' }}>
           <div style={{
-            display: 'flex', flexDirection: 'column', alignItems: 'center',
-            marginTop: `${coreSize * 80 + 18}px`,
+            display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+            marginTop: `${sz * 60 + 14}px`, marginLeft: `${sz * 30}px`,
           }}>
             <div style={{
-              color: selected ? '#ffffff' : colorHex,
-              fontSize: selected ? '11px' : '9px',
+              color: selected ? '#ffffff' : '#c0d8f0',
+              fontSize: selected ? '10px' : '8px',
               fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace',
               fontWeight: selected ? 700 : 500,
-              textShadow: `0 0 8px ${colorHex}, 0 0 20px ${colorHex}40`,
-              whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '1px',
+              textShadow: `0 0 6px ${colorHex}, 0 0 16px rgba(0,0,0,0.8)`,
+              whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.8px',
             }}>
-              {node.name.length > 20 ? node.name.slice(0, 19) + '…' : node.name}
+              {node.name.length > 18 ? node.name.slice(0, 17) + '…' : node.name}
             </div>
             {(selected || isImportant) && node.value > 0 && (
               <div style={{
-                marginTop: '3px', padding: '1px 6px',
-                background: `${colorHex}18`, border: `1px solid ${colorHex}40`, borderRadius: '3px',
-                color: selected ? '#ffffff' : colorHex,
-                fontSize: '8px', fontFamily: '"JetBrains Mono", monospace',
-                letterSpacing: '0.5px', textShadow: `0 0 6px ${colorHex}`,
+                color: colorHex, fontSize: '7px',
+                fontFamily: '"JetBrains Mono", monospace', letterSpacing: '0.5px',
+                textShadow: `0 0 4px ${colorHex}`,
               }}>
                 {fmtK(node.value)}
               </div>
             )}
             {selected && (
               <div style={{
-                marginTop: '2px', color: '#6a8ab0', fontSize: '8px',
+                color: '#5a7a9a', fontSize: '7px',
                 fontFamily: '"JetBrains Mono", monospace', letterSpacing: '1px',
               }}>
-                {node.type.toUpperCase()} · {node.contracts.length} CONTRACTS
+                {node.contracts.length} CONTRACTS
               </div>
             )}
           </div>
         </Html>
       )}
+    </group>
+  )
+}
+
+function SelectionRing({ size, color }: { size: number; color: string }) {
+  const ref = useRef<THREE.Group>(null!)
+  useFrame(({ clock }) => {
+    if (ref.current) {
+      ref.current.rotation.z = clock.elapsedTime * 1.5
+      ref.current.rotation.x = Math.sin(clock.elapsedTime * 0.6) * 0.4 + Math.PI / 3
+    }
+  })
+  return (
+    <group ref={ref}>
+      <mesh>
+        <torusGeometry args={[size * 3, 0.025, 8, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={0.8} />
+      </mesh>
+      <mesh rotation={[0.5, 0.3, 0]}>
+        <torusGeometry args={[size * 4, 0.015, 8, 48]} />
+        <meshBasicMaterial color={color} transparent opacity={0.4} />
+      </mesh>
     </group>
   )
 }
@@ -324,44 +292,44 @@ function ExpiringPulse({ size }: { size: number }) {
   return (
     <group ref={ref}>
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[size * 4, 0.04, 8, 48]} />
+        <torusGeometry args={[size * 4, 0.03, 8, 48]} />
         <meshBasicMaterial color="#ff2244" transparent opacity={0.7} />
-      </mesh>
-      <mesh rotation={[Math.PI / 2, 0, Math.PI / 6]}>
-        <torusGeometry args={[size * 5, 0.025, 8, 48]} />
-        <meshBasicMaterial color="#ff4466" transparent opacity={0.35} />
       </mesh>
     </group>
   )
 }
 
-/* ── Energy-flow edge with GLSL shader ── */
-function EnergyEdge({ from, to, highlighted, dimmed, color }: {
-  from: THREE.Vector3; to: THREE.Vector3; highlighted: boolean; dimmed: boolean; color: string
+/* ── Edge with GLSL energy shader ── */
+function ArcEdge({ from, to, highlighted, dimmed, color, index }: {
+  from: THREE.Vector3; to: THREE.Vector3; highlighted: boolean; dimmed: boolean; color: string; index: number
 }) {
   const shaderRef = useRef<THREE.ShaderMaterial>(null!)
 
   const { geometry, uniforms } = useMemo(() => {
     const mid = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5)
     const dist = from.distanceTo(to)
-    mid.y += dist * 0.06
-    mid.x += Math.sin(from.x * 0.5) * dist * 0.03
+    // Curved arcs with variation
+    const arcHeight = dist * 0.12 * (0.8 + Math.sin(index * 1.7) * 0.4)
+    mid.y += arcHeight * Math.cos(index * 0.9)
+    mid.x += arcHeight * Math.sin(index * 1.3) * 0.5
+    mid.z += arcHeight * Math.sin(index * 0.7) * 0.3
     const curve = new THREE.QuadraticBezierCurve3(from, mid, to)
-    const geo = new THREE.TubeGeometry(curve, 32, highlighted ? 0.06 : 0.025, 8, false)
+    const thickness = highlighted ? 0.04 : 0.012
+    const geo = new THREE.TubeGeometry(curve, 28, thickness, 6, false)
     return {
       geometry: geo,
       uniforms: {
         uTime: { value: 0 },
         uColor: { value: new THREE.Color(color) },
-        uOpacity: { value: dimmed ? 0.02 : highlighted ? 0.9 : 0.3 },
+        uOpacity: { value: dimmed ? 0.015 : highlighted ? 1.0 : 0.35 },
         uHighlighted: { value: highlighted ? 1.0 : 0.0 },
       },
     }
-  }, [from, to, highlighted, color, dimmed])
+  }, [from, to, highlighted, color, dimmed, index])
 
   useFrame(({ clock }) => {
     if (shaderRef.current) {
-      shaderRef.current.uniforms.uTime.value = clock.elapsedTime
+      shaderRef.current.uniforms.uTime.value = clock.elapsedTime + index * 0.3
     }
   })
 
@@ -369,8 +337,8 @@ function EnergyEdge({ from, to, highlighted, dimmed, color }: {
     <mesh geometry={geometry}>
       <shaderMaterial
         ref={shaderRef}
-        vertexShader={edgeVertexShader}
-        fragmentShader={edgeFragmentShader}
+        vertexShader={edgeVert}
+        fragmentShader={edgeFrag}
         uniforms={uniforms}
         transparent
         blending={THREE.AdditiveBlending}
@@ -381,18 +349,17 @@ function EnergyEdge({ from, to, highlighted, dimmed, color }: {
   )
 }
 
-/* ── Particle trails: dots flowing along edges ── */
+/* ── Particle trails flowing along edges ── */
 function EdgeParticles({ links, positions, visSet, hlSet }: {
   links: GraphLink[]; positions: Map<string, THREE.Vector3>
-  visSet: Set<string>
-  hlSet: Set<string> | null
+  visSet: Set<string>; hlSet: Set<string> | null
 }) {
-  const PARTICLES_PER_EDGE = 3
+  const PER_EDGE = 4
   const ref = useRef<THREE.Points>(null!)
 
   const { posArray, colArray, progressArr, edgeCurves } = useMemo(() => {
     const visLinks = links.filter(l => visSet.has(l.source.key) && visSet.has(l.target.key))
-    const count = visLinks.length * PARTICLES_PER_EDGE
+    const count = visLinks.length * PER_EDGE
     const pos = new Float32Array(count * 3)
     const col = new Float32Array(count * 3)
     const prog = new Float32Array(count)
@@ -404,26 +371,20 @@ function EdgeParticles({ links, positions, visSet, hlSet }: {
       const to = positions.get(l.target.key)!
       const mid = new THREE.Vector3().addVectors(from, to).multiplyScalar(0.5)
       const dist = from.distanceTo(to)
-      mid.y += dist * 0.06
-      mid.x += Math.sin(from.x * 0.5) * dist * 0.03
+      const arcH = dist * 0.12 * (0.8 + Math.sin(i * 1.7) * 0.4)
+      mid.y += arcH * Math.cos(i * 0.9)
+      mid.x += arcH * Math.sin(i * 1.3) * 0.5
+      mid.z += arcH * Math.sin(i * 0.7) * 0.3
       curves.push(new THREE.QuadraticBezierCurve3(from, mid, to))
 
       const c = new THREE.Color(GLOW_COLORS[l.source.type] ?? '#0088ff')
-      for (let p = 0; p < PARTICLES_PER_EDGE; p++) {
-        const idx = i * PARTICLES_PER_EDGE + p
-        prog[idx] = p / PARTICLES_PER_EDGE
-        col[idx * 3] = c.r
-        col[idx * 3 + 1] = c.g
-        col[idx * 3 + 2] = c.b
+      for (let p = 0; p < PER_EDGE; p++) {
+        const idx = i * PER_EDGE + p
+        prog[idx] = p / PER_EDGE
+        col[idx * 3] = c.r; col[idx * 3 + 1] = c.g; col[idx * 3 + 2] = c.b
       }
     }
-
-    return {
-      posArray: pos,
-      colArray: col,
-      progressArr: prog,
-      edgeCurves: curves,
-    }
+    return { posArray: pos, colArray: col, progressArr: prog, edgeCurves: curves }
   }, [links, positions, visSet])
 
   useFrame(({ clock }) => {
@@ -433,22 +394,19 @@ function EdgeParticles({ links, positions, visSet, hlSet }: {
     const posArr = attr.array as Float32Array
     const dt = clock.elapsedTime
     const tmp = new THREE.Vector3()
-
     for (let i = 0; i < edgeCurves.length; i++) {
       const curve = edgeCurves[i]
-      for (let p = 0; p < PARTICLES_PER_EDGE; p++) {
-        const idx = i * PARTICLES_PER_EDGE + p
-        const t = (progressArr[idx] + dt * 0.15) % 1.0
+      for (let p = 0; p < PER_EDGE; p++) {
+        const idx = i * PER_EDGE + p
+        const t = (progressArr[idx] + dt * 0.2) % 1.0
         curve.getPoint(t, tmp)
-        posArr[idx * 3] = tmp.x
-        posArr[idx * 3 + 1] = tmp.y
-        posArr[idx * 3 + 2] = tmp.z
+        posArr[idx * 3] = tmp.x; posArr[idx * 3 + 1] = tmp.y; posArr[idx * 3 + 2] = tmp.z
       }
     }
     attr.needsUpdate = true
   })
 
-  const dimAll = hlSet !== null
+  const dim = hlSet !== null
 
   return (
     <points ref={ref}>
@@ -457,36 +415,33 @@ function EdgeParticles({ links, positions, visSet, hlSet }: {
         <bufferAttribute attach="attributes-color" args={[colArray, 3]} />
       </bufferGeometry>
       <pointsMaterial
-        size={dimAll ? 0.08 : 0.15}
-        vertexColors
-        transparent
-        opacity={dimAll ? 0.1 : 0.6}
+        size={dim ? 0.06 : 0.18}
+        vertexColors transparent
+        opacity={dim ? 0.08 : 0.7}
         blending={THREE.AdditiveBlending}
-        depthWrite={false}
-        sizeAttenuation
+        depthWrite={false} sizeAttenuation
       />
     </points>
   )
 }
 
-/* ── Ambient floating particle field ── */
-function AmbientField() {
+/* ── Ambient dust ── */
+function AmbientDust() {
   const ref = useRef<THREE.Points>(null!)
-  const COUNT = 200
+  const COUNT = 300
   const { posArray } = useMemo(() => {
     const pos = new Float32Array(COUNT * 3)
     for (let i = 0; i < COUNT; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 120
-      pos[i * 3 + 1] = (Math.random() - 0.5) * 120
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 120
+      pos[i * 3] = (Math.random() - 0.5) * 140
+      pos[i * 3 + 1] = (Math.random() - 0.5) * 140
+      pos[i * 3 + 2] = (Math.random() - 0.5) * 100
     }
     return { posArray: pos }
   }, [])
 
   useFrame(({ clock }) => {
     if (ref.current) {
-      ref.current.rotation.y = clock.elapsedTime * 0.02
-      ref.current.rotation.x = Math.sin(clock.elapsedTime * 0.01) * 0.1
+      ref.current.rotation.y = clock.elapsedTime * 0.015
     }
   })
 
@@ -496,13 +451,10 @@ function AmbientField() {
         <bufferAttribute attach="attributes-position" args={[posArray, 3]} />
       </bufferGeometry>
       <pointsMaterial
-        size={0.12}
-        color="#1166aa"
-        transparent
-        opacity={0.4}
+        size={0.08} color="#1155aa"
+        transparent opacity={0.35}
         blending={THREE.AdditiveBlending}
-        depthWrite={false}
-        sizeAttenuation
+        depthWrite={false} sizeAttenuation
       />
     </points>
   )
@@ -513,16 +465,16 @@ function HoloGrid() {
   const ref = useRef<THREE.GridHelper>(null!)
   useFrame(({ clock }) => {
     if (ref.current) {
-      ;(ref.current.material as THREE.Material).opacity = 0.03 + Math.sin(clock.elapsedTime * 0.5) * 0.01
+      ;(ref.current.material as THREE.Material).opacity = 0.025 + Math.sin(clock.elapsedTime * 0.4) * 0.008
     }
   })
   const grid = useMemo(() => {
-    const g = new THREE.GridHelper(200, 60, '#0a3060', '#051830')
+    const g = new THREE.GridHelper(180, 50, '#0a2850', '#04152a')
     ;(g.material as THREE.Material).transparent = true
-    ;(g.material as THREE.Material).opacity = 0.035
+    ;(g.material as THREE.Material).opacity = 0.03
     return g
   }, [])
-  return <primitive ref={ref} object={grid} position={[0, -30, 0]} />
+  return <primitive ref={ref} object={grid} position={[0, -28, 0]} />
 }
 
 /* ── Scene ── */
@@ -562,7 +514,7 @@ function Scene(props: Props) {
     if (matchedNode) {
       const pos = positions.get(matchedNode.key)
       if (pos) {
-        camera.position.set(pos.x + 15, pos.y + 8, pos.z + 15)
+        camera.position.set(pos.x + 12, pos.y + 6, pos.z + 12)
         camera.lookAt(pos)
         onSelect(matchedNode)
       }
@@ -571,18 +523,15 @@ function Scene(props: Props) {
 
   return (
     <>
-      <ambientLight intensity={0.03} />
-      <pointLight position={[50, 50, 50]} intensity={0.6} color="#0066cc" distance={150} />
-      <pointLight position={[-40, -30, -30]} intensity={0.4} color="#003366" distance={120} />
-      <pointLight position={[0, 60, 0]} intensity={0.3} color="#0088ff" distance={100} />
+      <ambientLight intensity={0.02} />
+      <pointLight position={[50, 50, 40]} intensity={0.4} color="#0066cc" distance={150} />
+      <pointLight position={[-40, -20, -30]} intensity={0.3} color="#003355" distance={120} />
 
-      <AmbientField />
+      <AmbientDust />
       <HoloGrid />
 
-      {/* Particle trails along edges */}
       <EdgeParticles links={links} positions={positions} visSet={visSet} hlSet={hlSet} />
 
-      {/* Energy-flow edges */}
       {links.map((l, i) => {
         if (!visSet.has(l.source.key) || !visSet.has(l.target.key)) return null
         const from = positions.get(l.source.key)
@@ -591,21 +540,20 @@ function Scene(props: Props) {
         const hl = hlSet && (l.source === selected || l.target === selected)
         const dim = hlSet !== null && !hl
         const c = GLOW_COLORS[l.source.type] ?? '#0088ff'
-        return <EnergyEdge key={i} from={from} to={to} highlighted={!!hl} dimmed={dim} color={c} />
+        return <ArcEdge key={i} from={from} to={to} highlighted={!!hl} dimmed={dim} color={c} index={i} />
       })}
 
-      {/* Fresnel-lit nodes */}
       {visible.map(n => {
         const pos = positions.get(n.key)
         if (!pos) return null
         const r = nodeRadius(n, maxValue)
-        const isSelected = selected === n
-        const isHighlighted = hlSet?.has(n.key) ?? false
-        const isDimmed = hlSet !== null && !isHighlighted
+        const isSel = selected === n
+        const isHl = hlSet?.has(n.key) ?? false
+        const isDim = hlSet !== null && !isHl
         return (
-          <GlowNode
+          <NetNode
             key={n.key} node={n} position={pos} radius={r}
-            selected={isSelected} highlighted={isHighlighted} dimmed={isDimmed}
+            selected={isSel} highlighted={isHl} dimmed={isDim}
             expiring={expiringSet.has(n.key)} searchMatch={matchedNode === n}
             onClick={() => onSelect(n === selected ? null : n)}
           />
@@ -613,140 +561,148 @@ function Scene(props: Props) {
       })}
 
       <OrbitControls
-        enableDamping dampingFactor={0.04}
-        minDistance={5} maxDistance={120}
-        autoRotate autoRotateSpeed={0.2}
+        enableDamping dampingFactor={0.05}
+        minDistance={5} maxDistance={100}
+        autoRotate autoRotateSpeed={0.15}
         zoomSpeed={0.8}
       />
 
       <EffectComposer multisampling={4}>
-        <Bloom intensity={2.0} luminanceThreshold={0.08} luminanceSmoothing={0.9} mipmapBlur />
+        <Bloom intensity={2.5} luminanceThreshold={0.05} luminanceSmoothing={0.95} mipmapBlur />
         <ChromaticAberration
           blendFunction={BlendFunction.NORMAL}
-          offset={new THREE.Vector2(0.0005, 0.0005) as any}
+          offset={new THREE.Vector2(0.0004, 0.0004) as any}
         />
-        <Vignette offset={0.25} darkness={0.7} blendFunction={BlendFunction.NORMAL} />
-        <Noise blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.06} />
+        <Vignette offset={0.2} darkness={0.65} blendFunction={BlendFunction.NORMAL} />
+        <Noise blendFunction={BlendFunction.SOFT_LIGHT} opacity={0.05} />
       </EffectComposer>
     </>
   )
 }
 
 export default function PlanetaryWeb(props: Props) {
+  const totalSpend = props.nodes
+    .filter(n => n.type === 'contract')
+    .reduce((s, n) => s + (n.contract?.annualValue ?? 0), 0)
+  const supplierCount = props.nodes.filter(n => n.type === 'supplier').length
+  const deptCount = props.nodes.filter(n => n.type === 'department').length
+
   return (
-    <div className="flex-1 relative overflow-hidden" style={{ background: '#010818' }}>
+    <div className="flex-1 relative overflow-hidden" style={{ background: '#010a18' }}>
       <Canvas
-        camera={{ position: [35, 22, 35], fov: 50, near: 0.1, far: 500 }}
-        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.4 } as any}
+        camera={{ position: [30, 18, 30], fov: 52, near: 0.1, far: 400 }}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance', toneMapping: THREE.ACESFilmicToneMapping, toneMappingExposure: 1.5 } as any}
         dpr={[1, 2]}
         onPointerMissed={() => props.onSelect(null)}
       >
-        <color attach="background" args={['#010818']} />
-        <fog attach="fog" args={['#010818', 80, 160]} />
+        <color attach="background" args={['#010a18']} />
+        <fog attach="fog" args={['#010a18', 70, 140]} />
         <Scene {...props} />
       </Canvas>
 
-      {/* Scanline overlay */}
+      {/* Scanlines */}
       <div className="absolute inset-0 pointer-events-none" style={{
-        background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,140,255,0.012) 2px, rgba(0,140,255,0.012) 4px)',
+        background: 'repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,120,255,0.01) 2px, rgba(0,120,255,0.01) 4px)',
         mixBlendMode: 'screen',
       }} />
 
       {/* Corner brackets */}
-      {[
-        { t: 0, l: 0, bt: true, bl: true },
-        { t: 0, r: 0, bt: true, br: true },
-        { b: 0, l: 0, bb: true, bl: true },
-        { b: 0, r: 0, bb: true, br: true },
-      ].map((c, i) => (
-        <div key={i} className="absolute w-20 h-20 pointer-events-none" style={{
-          top: c.t ?? undefined, bottom: (c as any).b ?? undefined,
-          left: c.l ?? undefined, right: c.r ?? undefined,
-          borderTop: c.bt ? '2px solid rgba(0,140,255,0.5)' : undefined,
-          borderBottom: (c as any).bb ? '2px solid rgba(0,140,255,0.5)' : undefined,
-          borderLeft: c.bl ? '2px solid rgba(0,140,255,0.5)' : undefined,
-          borderRight: c.br ? '2px solid rgba(0,140,255,0.5)' : undefined,
+      {[[0,0,'tl'],[0,1,'tr'],[1,0,'bl'],[1,1,'br']].map(([v,h,k]) => (
+        <div key={k as string} className="absolute w-16 h-16 pointer-events-none" style={{
+          top: v === 0 ? 0 : undefined, bottom: v === 1 ? 0 : undefined,
+          left: h === 0 ? 0 : undefined, right: h === 1 ? 0 : undefined,
+          borderTop: v === 0 ? '2px solid rgba(0,140,255,0.45)' : undefined,
+          borderBottom: v === 1 ? '2px solid rgba(0,140,255,0.45)' : undefined,
+          borderLeft: h === 0 ? '2px solid rgba(0,140,255,0.45)' : undefined,
+          borderRight: h === 1 ? '2px solid rgba(0,140,255,0.45)' : undefined,
         }} />
       ))}
 
-      {/* Horizontal scan lines at top and bottom */}
-      <div className="absolute top-3 left-24 right-24 h-px pointer-events-none"
-        style={{ background: 'linear-gradient(to right, transparent, rgba(0,140,255,0.35), transparent)' }} />
-      <div className="absolute bottom-8 left-24 right-24 h-px pointer-events-none"
-        style={{ background: 'linear-gradient(to right, transparent, rgba(0,140,255,0.2), transparent)' }} />
+      {/* Top line */}
+      <div className="absolute top-2.5 left-20 right-20 h-px pointer-events-none"
+        style={{ background: 'linear-gradient(to right, transparent, rgba(0,140,255,0.3), transparent)' }} />
 
-      {/* HUD title block */}
-      <div className="absolute top-4 left-4 pointer-events-none"
-        style={{ fontFamily: '"JetBrains Mono", "SF Mono", "Fira Code", monospace' }}>
-        <div style={{ color: '#00aaff', fontSize: '14px', fontWeight: 700, letterSpacing: '3px', textShadow: '0 0 12px rgba(0,170,255,0.6)' }}>
-          PROCUREMENT NETWORK
+      {/* ─── HUD: Title ─── */}
+      <div className="absolute top-3 left-4 pointer-events-none" style={{ fontFamily: '"JetBrains Mono", "SF Mono", monospace' }}>
+        <div style={{ color: '#e0f0ff', fontSize: '16px', fontWeight: 700, letterSpacing: '4px', textShadow: '0 0 12px rgba(0,170,255,0.5)' }}>
+          GLOBAL NETWORK ANALYSIS
         </div>
-        <div style={{ color: '#00aaff', fontSize: '14px', fontWeight: 700, letterSpacing: '3px', textShadow: '0 0 12px rgba(0,170,255,0.6)' }}>
-          OPERATIONAL STATUS
-        </div>
-        <div className="mt-2 space-y-0.5">
-          <div style={{ color: '#4a6a90', fontSize: '9px', letterSpacing: '1.5px' }}>REAL-TIME DATA</div>
-          <div style={{ color: '#4a6a90', fontSize: '9px', letterSpacing: '1.5px' }}>STATUS: ACTIVE</div>
+        <div style={{ color: '#3a6a90', fontSize: '9px', letterSpacing: '1.5px', marginTop: '2px' }}>
+          PROCUREMENT INTELLIGENCE · REAL-TIME SYNC
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="absolute top-32 left-4 border rounded-lg p-3 text-xs space-y-1.5"
+      {/* ─── HUD: Connection Matrix panel (top-left under title) ─── */}
+      <div className="absolute top-16 left-4 border rounded p-2.5 pointer-events-none"
         style={{
-          background: 'rgba(1,8,24,0.88)', borderColor: 'rgba(0,100,200,0.3)',
-          backdropFilter: 'blur(12px)', fontFamily: '"JetBrains Mono", "SF Mono", monospace',
-          boxShadow: '0 0 20px rgba(0,80,180,0.1)',
+          background: 'rgba(1,10,24,0.85)', borderColor: 'rgba(0,100,200,0.25)',
+          fontFamily: '"JetBrains Mono", monospace', minWidth: '180px',
         }}>
-        <div style={{ color: '#0077bb', fontSize: '9px', letterSpacing: '2px', fontWeight: 700, marginBottom: '6px' }}>
-          SYSTEM ENTITIES
+        <div style={{ color: '#00aaff', fontSize: '10px', fontWeight: 700, letterSpacing: '1.5px', marginBottom: '6px' }}>
+          CONNECTION MATRIX v7.2
         </div>
         {Object.entries(TYPE_LABELS).map(([t, label]) => {
           const count = props.nodes.filter(n => n.type === t).length
           return (
-            <label key={t} className="flex items-center gap-2 cursor-pointer group">
-              <input type="checkbox" checked={props.visibleTypes[t]} readOnly className="accent-[#00aaff]" data-type={t} />
-              <span className="w-2.5 h-2.5 rounded-full inline-block" style={{
+            <label key={t} className="flex items-center gap-2 cursor-pointer group" style={{ marginBottom: '3px' }}>
+              <input type="checkbox" checked={props.visibleTypes[t]} readOnly className="accent-[#00aaff]" data-type={t}
+                style={{ width: '12px', height: '12px' }} />
+              <span style={{
+                width: '8px', height: '8px', borderRadius: '50%', display: 'inline-block',
                 background: GLOW_COLORS[t],
-                boxShadow: `0 0 6px ${GLOW_COLORS[t]}, 0 0 16px ${GLOW_COLORS[t]}60`,
+                boxShadow: `0 0 4px ${GLOW_COLORS[t]}, 0 0 10px ${GLOW_COLORS[t]}50`,
               }} />
-              <span className="group-hover:text-[#88bbdd] transition" style={{ color: '#5a7a9a', fontSize: '10px' }}>{label}</span>
-              <span style={{ color: '#3a5a7a', fontSize: '10px' }} className="ml-auto">{count}</span>
+              <span className="group-hover:text-[#88bbdd] transition"
+                style={{ color: '#6a8aaa', fontSize: '9px', flex: 1 }}>{label}</span>
+              <span style={{ color: GLOW_COLORS[t], fontSize: '9px', fontWeight: 600 }}>{count}</span>
             </label>
           )
         })}
       </div>
 
-      {/* Stats panel */}
-      {props.selected === null && (
-        <div className="absolute top-4 right-4 pointer-events-none"
-          style={{ fontFamily: '"JetBrains Mono", "SF Mono", monospace' }}>
-          <div className="space-y-3">
-            {[
-              { label: 'NODES', value: String(props.nodes.length) },
-              { label: 'LINKS', value: String(props.links.length) },
-            ].map(({ label, value }) => (
-              <div key={label} className="text-right">
-                <div style={{
-                  color: '#00aaff', fontSize: '20px', fontWeight: 700,
-                  textShadow: '0 0 15px rgba(0,170,255,0.5)', letterSpacing: '1px',
-                }}>
-                  {value}
-                </div>
-                <div style={{ color: '#4a6a90', fontSize: '9px', letterSpacing: '2px' }}>{label}</div>
-              </div>
-            ))}
-          </div>
+      {/* ─── HUD: Stats panel (top-right) ─── */}
+      <div className="absolute top-3 right-4 pointer-events-none"
+        style={{ fontFamily: '"JetBrains Mono", monospace', textAlign: 'right' }}>
+        <div className="space-y-1">
+          {[
+            { label: 'NODES', value: String(props.nodes.length), color: '#00aaff' },
+            { label: 'CONNECTIONS', value: String(props.links.length), color: '#00aaff' },
+          ].map(({ label, value, color }) => (
+            <div key={label}>
+              <span style={{ color, fontSize: '18px', fontWeight: 700, textShadow: `0 0 12px ${color}50`, letterSpacing: '1px' }}>
+                {value}
+              </span>
+              <span style={{ color: '#3a5a7a', fontSize: '8px', letterSpacing: '1.5px', marginLeft: '6px' }}>{label}</span>
+            </div>
+          ))}
         </div>
-      )}
+      </div>
 
-      {/* Bottom bar */}
-      <div className="absolute bottom-3 left-4 right-4 flex justify-between items-end pointer-events-none"
-        style={{ fontFamily: '"JetBrains Mono", "SF Mono", monospace' }}>
-        <div style={{ color: '#2a4a6a', fontSize: '9px', letterSpacing: '1.5px' }}>
-          NETWORK TOPOLOGY · INTERACTIVE
+      {/* ─── HUD: Bottom-left panel ─── */}
+      <div className="absolute bottom-3 left-4 border rounded p-2.5 pointer-events-none"
+        style={{
+          background: 'rgba(1,10,24,0.85)', borderColor: 'rgba(0,100,200,0.2)',
+          fontFamily: '"JetBrains Mono", monospace', minWidth: '200px',
+        }}>
+        <div style={{ color: '#00aaff', fontSize: '9px', fontWeight: 700, letterSpacing: '1.5px', marginBottom: '4px' }}>
+          NETWORK METRICS
         </div>
-        <div style={{ color: '#2a4a6a', fontSize: '9px', letterSpacing: '1.5px' }}>
-          ORBIT · ZOOM · SELECT
+        <div style={{ color: '#4a7a9a', fontSize: '8px', letterSpacing: '1px', lineHeight: '16px' }}>
+          <div>TOTAL SPEND: <span style={{ color: '#00ddff' }}>{fmtK(totalSpend)}</span></div>
+          <div>SUPPLIERS: <span style={{ color: '#ff3366' }}>{supplierCount}</span></div>
+          <div>DEPARTMENTS: <span style={{ color: '#00bbff' }}>{deptCount}</span></div>
+          <div>CORRELATION DENSITY: <span style={{ color: '#33ff88' }}>
+            {props.nodes.length > 0 ? Math.round(props.links.length / props.nodes.length * 100) / 100 : 0}
+          </span></div>
+        </div>
+      </div>
+
+      {/* ─── HUD: Bottom-right panel ─── */}
+      <div className="absolute bottom-3 right-4 pointer-events-none"
+        style={{ fontFamily: '"JetBrains Mono", monospace', textAlign: 'right' }}>
+        <div style={{ color: '#2a4a6a', fontSize: '8px', letterSpacing: '1.5px', lineHeight: '14px' }}>
+          <div>ORBIT · ZOOM · SELECT</div>
+          <div>3D NETWORK TOPOLOGY</div>
         </div>
       </div>
     </div>
