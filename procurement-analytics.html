@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Procurement Web — Contract Network & Diagnostics</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --panel2: #1d2639; --line: #2a3650;
+    --text: #e8edf7; --muted: #8fa0bd; --accent: #4da3ff;
+    --dept: #4da3ff; --cat: #ffb347; --sup: #ff6b81; --own: #7bd88f; --con: #b48cff;
+    --ok: #7bd88f; --warn: #ffb347; --bad: #ff6b81;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--text); font-family: 'Segoe UI', system-ui, sans-serif; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
+  header { display:flex; align-items:center; gap:16px; padding:10px 18px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header h1 { font-size:17px; font-weight:600; letter-spacing:.3px; }
+  header h1 span { color:var(--accent); }
+  .btn { background:var(--accent); color:#08101f; border:none; border-radius:8px; padding:8px 14px; font-weight:600; cursor:pointer; font-size:13px; }
+  .btn.ghost { background:transparent; color:var(--accent); border:1px solid var(--accent); }
+  .btn:hover { filter:brightness(1.12); }
+  #fileStatus { font-size:12px; color:var(--muted); }
+  .tabs { margin-left:auto; display:flex; gap:6px; }
+  .tab { padding:7px 14px; border-radius:8px; font-size:13px; cursor:pointer; color:var(--muted); border:1px solid transparent; }
+  .tab.active { color:var(--text); background:var(--panel2); border-color:var(--line); }
+  main { flex:1; display:flex; min-height:0; }
+  /* Graph view */
+  #graphView { flex:1; display:flex; min-height:0; }
+  #canvasWrap { flex:1; position:relative; }
+  canvas { display:block; width:100%; height:100%; cursor:grab; }
+  #legend { position:absolute; top:12px; left:12px; background:rgba(23,30,46,.9); border:1px solid var(--line); border-radius:10px; padding:10px 12px; font-size:12px; }
+  #legend label { display:flex; align-items:center; gap:7px; margin:3px 0; cursor:pointer; color:var(--muted); }
+  #legend input { accent-color: var(--accent); }
+  .dot { width:10px; height:10px; border-radius:50%; display:inline-block; }
+  #hint { position:absolute; bottom:10px; left:12px; font-size:11px; color:var(--muted); }
+  #sidebar { width:320px; background:var(--panel); border-left:1px solid var(--line); padding:16px; overflow-y:auto; }
+  #sidebar h2 { font-size:14px; margin-bottom:8px; }
+  #sidebar .kv { display:flex; justify-content:space-between; font-size:12.5px; padding:5px 0; border-bottom:1px solid var(--line); }
+  #sidebar .kv b { color:var(--muted); font-weight:500; }
+  .chip { display:inline-block; font-size:11px; padding:2px 8px; border-radius:20px; margin:2px 2px; background:var(--panel2); border:1px solid var(--line); color:var(--muted); }
+  /* Diagnostics view */
+  #diagView { flex:1; overflow-y:auto; padding:20px; display:none; }
+  .section-title { font-size:15px; margin:14px 0 10px; color:var(--text); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:14px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 16px; }
+  .card h3 { font-size:14px; margin-bottom:2px; }
+  .score { float:right; font-size:13px; font-weight:700; padding:2px 10px; border-radius:20px; }
+  .s-ok { background:rgba(123,216,143,.15); color:var(--ok); }
+  .s-warn { background:rgba(255,179,71,.15); color:var(--warn); }
+  .s-bad { background:rgba(255,107,129,.15); color:var(--bad); }
+  .card .row { display:flex; justify-content:space-between; font-size:12.5px; padding:4px 0; color:var(--muted); }
+  .card .row span:last-child { color:var(--text); }
+  .flags { margin-top:8px; }
+  .flag { font-size:11.5px; padding:3px 0; }
+  .flag.warn { color:var(--warn); } .flag.bad { color:var(--bad); } .flag.ok { color:var(--ok); }
+  #summaryBar { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:8px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+  .stat .v { font-size:20px; font-weight:700; } .stat .l { font-size:11.5px; color:var(--muted); margin-top:2px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Procurement<span>Web</span></h1>
+  <button class="btn" id="uploadBtn">Upload ERP CSV</button>
+  <button class="btn ghost" id="sampleBtn">Load sample data</button>
+  <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+  <span id="fileStatus">Sample dataset loaded</span>
+  <div class="tabs">
+    <div class="tab active" data-view="graph">Spider Web</div>
+    <div class="tab" data-view="diag">Diagnostics</div>
+  </div>
+</header>
+<main>
+  <div id="graphView">
+    <div id="canvasWrap">
+      <canvas id="net"></canvas>
+      <div id="legend"></div>
+      <div id="hint">Drag nodes · drag background to pan · scroll to zoom · click a node for details</div>
+    </div>
+    <div id="sidebar"><h2>Network</h2><div id="details"><p style="font-size:12.5px;color:var(--muted)">Click any node to inspect its connections, spend and risk profile.</p></div></div>
+  </div>
+  <div id="diagView"></div>
+</main>
+<script>
+"use strict";
+/* ---------- CSV parsing ---------- */
+function parseCSV(text) {
+  const delim = (text.split("\n")[0].split(";").length > text.split("\n")[0].split(",").length) ? ";" : ",";
+  const rows = []; let row = [], field = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i+1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+    else if (c === '"') q = true;
+    else if (c === delim) { row.push(field); field = ""; }
+    else if (c === "\n" || c === "\r") { if (c === "\r" && text[i+1] === "\n") i++; row.push(field); field=""; if (row.some(f=>f.trim()!=="")) rows.push(row); row = []; }
+    else field += c;
+  }
+  if (field !== "" || row.length) { row.push(field); if (row.some(f=>f.trim()!=="")) rows.push(row); }
+  return rows;
+}
+const HEADER_MAP = {
+  contract_id:["contract_id","contractid","id","contract no","contract number","contractnr"],
+  contract_name:["contract_name","contract","name","description","contract description","title"],
+  supplier:["supplier","vendor","supplier_name","vendor_name","leverancier"],
+  category:["category","spend_category","commodity","categorie","spend category"],
+  department:["department","dept","business_unit","afdeling","business unit","cost_center"],
+  contract_owner:["contract_owner","owner","manager","contract manager","responsible","contracteigenaar"],
+  annual_value:["annual_value","value","amount","spend","annual spend","contract value","jaarwaarde","total_value"],
+  start_date:["start_date","start","startdatum","effective_date"],
+  end_date:["end_date","end","expiry","expiry_date","einddatum","expiration"],
+  status:["status"],
+  renewal_notice_days:["renewal_notice_days","notice_days","notice period","opzegtermijn"]
+};
+function mapHeaders(headerRow) {
+  const map = {};
+  headerRow.forEach((h,i) => {
+    const key = h.trim().toLowerCase().replace(/[_-]+/g," ").trim();
+    for (const [field, aliases] of Object.entries(HEADER_MAP))
+      if (aliases.some(a => a.replace(/[_-]+/g," ") === key)) { map[field] = i; return; }
+  });
+  return map;
+}
+function parseNum(v){ if(v==null) return NaN; const n=parseFloat(String(v).replace(/[€$£\s]/g,"").replace(/\.(?=\d{3}(\D|$))/g,"").replace(",",".")); return isNaN(n)?NaN:n; }
+function parseDate(v){ if(!v) return null; const s=String(v).trim(); let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return new Date(+m[1],+m[2]-1,+m[3]); m=s.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/); if(m) return new Date(+m[3],+m[2]-1,+m[1]); const d=new Date(s); return isNaN(d)?null:d; }
+
+function rowsToContracts(rows) {
+  const map = mapHeaders(rows[0]);
+  if (map.supplier===undefined && map.contract_name===undefined) throw new Error("Could not recognize headers. Expected columns like supplier, category, department, contract_owner, annual_value…");
+  return rows.slice(1).map((r,idx) => ({
+    id: (map.contract_id!==undefined && r[map.contract_id]) ? r[map.contract_id].trim() : "C"+(idx+1),
+    name: (map.contract_name!==undefined && r[map.contract_name]) ? r[map.contract_name].trim() : "Contract "+(idx+1),
+    supplier: (map.supplier!==undefined && r[map.supplier]||"").trim() || "Unknown supplier",
+    category: (map.category!==undefined && r[map.category]||"").trim() || "Uncategorized",
+    department: (map.department!==undefined && r[map.department]||"").trim() || "Unassigned",
+    owner: (map.contract_owner!==undefined && r[map.contract_owner]||"").trim(),
+    value: map.annual_value!==undefined ? parseNum(r[map.annual_value]) : NaN,
+    start: map.start_date!==undefined ? parseDate(r[map.start_date]) : null,
+    end: map.end_date!==undefined ? parseDate(r[map.end_date]) : null,
+    status: (map.status!==undefined && r[map.status]||"").trim()
+  }));
+}
+
+/* ---------- Sample data ---------- */
+const SAMPLE = `contract_id,contract_name,supplier,category,department,contract_owner,annual_value,start_date,end_date,status
+C001,Laptop lease fleet,TechLease BV,IT Hardware,IT,Sanne de Vries,240000,2024-01-01,2026-12-31,Active
+C002,Microsoft licensing EA,SoftServe Partners,Software,IT,Sanne de Vries,410000,2025-04-01,2028-03-31,Active
+C003,Datacenter colocation,NLDatacenters,IT Infrastructure,IT,Peter Janssen,185000,2023-06-01,2026-05-31,Active
+C004,Cybersecurity SOC,SecureWatch,IT Services,IT,Peter Janssen,150000,2024-09-01,2026-08-31,Active
+C005,Office cleaning HQ,CleanCo Facility,Facility Services,Facilities,Mark Bakker,95000,2023-01-01,2025-12-31,Active
+C006,Catering services,FoodWorks,Facility Services,Facilities,Mark Bakker,120000,2024-03-01,2026-02-28,Active
+C007,Building maintenance,BouwOnderhoud NL,Facility Services,Facilities,Mark Bakker,210000,2022-01-01,2025-09-30,Active
+C008,Security guarding,SecureWatch,Facility Services,Facilities,,88000,2024-01-01,2026-12-31,Active
+C009,Temp staffing IT,FlexForce,Contingent Labour,HR,Lisa van Dam,320000,2025-01-01,2025-11-30,Active
+C010,Recruitment RPO,TalentBridge,HR Services,HR,Lisa van Dam,140000,2024-06-01,2027-05-31,Active
+C011,Payroll processing,PayDesk,HR Services,HR,Lisa van Dam,60000,2023-01-01,2026-12-31,Active
+C012,Learning platform,SkillUp,HR Services,HR,,45000,2025-02-01,2026-01-31,Active
+C013,Road freight EU,TransEuro Logistics,Logistics,Operations,Ahmed Yilmaz,520000,2024-01-01,2025-10-15,Active
+C014,Warehouse equipment,LiftMasters,Equipment,Operations,Ahmed Yilmaz,175000,2023-05-01,2027-04-30,Active
+C015,Packaging materials,PackRight,Packaging,Operations,Emma Visser,260000,2025-01-01,2026-12-31,Active
+C016,Pallet supply,PackRight,Packaging,Operations,Emma Visser,90000,2025-01-01,2026-06-30,Active
+C017,Marketing agency retainer,BrandBoost,Marketing Services,Marketing,Tom Hendriks,300000,2024-04-01,2025-09-30,Active
+C018,Print & promo materials,PrintPro,Marketing Services,Marketing,Tom Hendriks,,2024-01-01,2026-12-31,Active
+C019,Event management,EventGurus,Marketing Services,Marketing,Tom Hendriks,110000,2025-03-01,2026-02-28,Active
+C020,Legal counsel retainer,LexAdvocaten,Professional Services,Legal,Julia Smit,180000,2023-01-01,2025-12-31,Active
+C021,Audit services,AuditPartners,Professional Services,Finance,Robert Chen,95000,2024-01-01,2026-12-31,Active
+C022,Insurance brokerage,RiskShield,Insurance,Finance,Robert Chen,75000,2024-01-01,2025-12-31,Active
+C023,Energy supply HQ,GreenEnergy NL,Utilities,Facilities,Mark Bakker,340000,2023-01-01,2025-09-01,Expired
+C024,Mobile telecom,ConnectTel,Telecom,IT,Sanne de Vries,65000,2024-07-01,2026-06-30,Active
+C025,Fleet lease cars,AutoLease Plus,Fleet,Facilities,,290000,2024-01-01,2027-12-31,Active`;
+
+/* ---------- Graph model ---------- */
+const COLORS = { department:"#4da3ff", category:"#ffb347", supplier:"#ff6b81", owner:"#7bd88f", contract:"#b48cff" };
+const TYPE_LABELS = { department:"Departments", category:"Categories", supplier:"Suppliers", owner:"Contract owners", contract:"Contracts" };
+let contracts = [], nodes = [], links = [], nodeById = new Map();
+let visibleTypes = { department:true, category:true, supplier:true, owner:true, contract:true };
+let selected = null;
+
+function fmtMoney(v){ return isNaN(v) ? "—" : "€" + Math.round(v).toLocaleString("en-US"); }
+
+function buildGraph() {
+  nodes = []; links = []; nodeById = new Map(); selected = null;
+  const W = canvas.clientWidth || 900, H = canvas.clientHeight || 600;
+  function getNode(type, name) {
+    const key = type + "::" + name;
+    let n = nodeById.get(key);
+    if (!n) {
+      n = { key, type, name, x: W/2 + (Math.random()-0.5)*W*0.7, y: H/2 + (Math.random()-0.5)*H*0.7,
+            vx:0, vy:0, value:0, count:0, contracts:[] };
+      nodeById.set(key, n); nodes.push(n);
+    }
+    return n;
+  }
+  function link(a,b){ links.push({ a, b }); }
+  for (const c of contracts) {
+    const nc = getNode("contract", c.name); nc.contract = c;
+    const nd = getNode("department", c.department);
+    const ncat = getNode("category", c.category);
+    const ns = getNode("supplier", c.supplier);
+    link(nc, nd); link(nc, ncat); link(nc, ns); link(ncat, nd);
+    let no = null;
+    if (c.owner) { no = getNode("owner", c.owner); link(nc, no); link(no, nd); }
+    for (const n of [nc, nd, ncat, ns, no]) if (n) { n.value += isNaN(c.value)?0:c.value; n.count++; n.contracts.push(c); }
+  }
+  // dedupe links
+  const seen = new Set();
+  links = links.filter(l => { const k = l.a.key<l.b.key ? l.a.key+"|"+l.b.key : l.b.key+"|"+l.a.key; if (seen.has(k)) return false; seen.add(k); return true; });
+  // neighbor sets
+  for (const n of nodes) n.neighbors = new Set();
+  for (const l of links) { l.a.neighbors.add(l.b); l.b.neighbors.add(l.a); }
+  alpha = 1;
+}
+
+function nodeRadius(n) {
+  const maxV = Math.max(1, ...nodes.map(m => m.value));
+  const base = { department:14, category:11, supplier:9, owner:9, contract:6 }[n.type];
+  return base + 10 * Math.sqrt(n.value / maxV);
+}
+
+/* ---------- Force simulation ---------- */
+let alpha = 1;
+function tick() {
+  const vis = nodes.filter(n => visibleTypes[n.type]);
+  if (alpha < 0.005 || vis.length === 0) return;
+  const W = canvas.clientWidth, H = canvas.clientHeight;
+  // repulsion (O(n²) is fine up to ~1500 nodes)
+  for (let i = 0; i < vis.length; i++) for (let j = i+1; j < vis.length; j++) {
+    const a = vis[i], b = vis[j];
+    let dx = b.x - a.x, dy = b.y - a.y;
+    let d2 = dx*dx + dy*dy; if (d2 < 1) { dx = Math.random()-0.5; dy = Math.random()-0.5; d2 = 1; }
+    const f = 1800 / d2 * alpha;
+    const d = Math.sqrt(d2);
+    dx /= d; dy /= d;
+    a.vx -= dx*f; a.vy -= dy*f; b.vx += dx*f; b.vy += dy*f;
+  }
+  // springs
+  for (const l of links) {
+    if (!visibleTypes[l.a.type] || !visibleTypes[l.b.type]) continue;
+    const dx = l.b.x - l.a.x, dy = l.b.y - l.a.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const target = 70 + nodeRadius(l.a) + nodeRadius(l.b);
+    const f = (d - target) * 0.02 * alpha;
+    const fx = dx/d*f, fy = dy/d*f;
+    l.a.vx += fx; l.a.vy += fy; l.b.vx -= fx; l.b.vy -= fy;
+  }
+  // centering + integrate
+  for (const n of vis) {
+    n.vx += (W/2 - n.x) * 0.002 * alpha;
+    n.vy += (H/2 - n.y) * 0.002 * alpha;
+    if (n !== dragNode) { n.x += n.vx; n.y += n.vy; }
+    n.vx *= 0.85; n.vy *= 0.85;
+  }
+  alpha *= 0.995;
+}
+
+/* ---------- Rendering ---------- */
+const canvas = document.getElementById("net"), ctx = canvas.getContext("2d");
+let view = { x:0, y:0, k:1 };
+function resize(){ canvas.width = canvas.clientWidth * devicePixelRatio; canvas.height = canvas.clientHeight * devicePixelRatio; }
+window.addEventListener("resize", resize);
+
+function draw() {
+  tick();
+  ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+  ctx.clearRect(0,0,canvas.clientWidth,canvas.clientHeight);
+  ctx.translate(view.x, view.y); ctx.scale(view.k, view.k);
+  const hl = selected ? new Set([selected, ...selected.neighbors]) : null;
+  for (const l of links) {
+    if (!visibleTypes[l.a.type] || !visibleTypes[l.b.type]) continue;
+    const on = hl && (l.a === selected || l.b === selected);
+    ctx.strokeStyle = on ? "rgba(255,255,255,0.55)" : (hl ? "rgba(80,100,140,0.10)" : "rgba(120,145,190,0.22)");
+    ctx.lineWidth = on ? 1.8 : 1;
+    ctx.beginPath(); ctx.moveTo(l.a.x, l.a.y); ctx.lineTo(l.b.x, l.b.y); ctx.stroke();
+  }
+  for (const n of nodes) {
+    if (!visibleTypes[n.type]) continue;
+    const r = nodeRadius(n);
+    const dim = hl && !hl.has(n);
+    ctx.globalAlpha = dim ? 0.18 : 1;
+    ctx.fillStyle = COLORS[n.type];
+    ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI*2); ctx.fill();
+    if (n === selected) { ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke(); }
+    if (!dim && (n.type !== "contract" || view.k > 1.2 || n === selected || (hl && hl.has(n)))) {
+      ctx.fillStyle = "#dfe7f5"; ctx.font = "11px 'Segoe UI', sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(n.name.length > 26 ? n.name.slice(0,25)+"…" : n.name, n.x, n.y + r + 12);
+    }
+    ctx.globalAlpha = 1;
+  }
+  requestAnimationFrame(draw);
+}
+
+/* ---------- Interaction ---------- */
+let dragNode = null, panning = false, last = null, moved = false;
+function toWorld(e){ const rect = canvas.getBoundingClientRect(); return { x:(e.clientX-rect.left-view.x)/view.k, y:(e.clientY-rect.top-view.y)/view.k }; }
+function pick(p){ for (let i = nodes.length-1; i >= 0; i--) { const n = nodes[i]; if (!visibleTypes[n.type]) continue; if (Math.hypot(n.x-p.x, n.y-p.y) < nodeRadius(n)+4) return n; } return null; }
+canvas.addEventListener("pointerdown", e => {
+  canvas.setPointerCapture(e.pointerId);
+  const p = toWorld(e); dragNode = pick(p); panning = !dragNode; last = { x:e.clientX, y:e.clientY }; moved = false;
+  canvas.style.cursor = "grabbing";
+});
+canvas.addEventListener("pointermove", e => {
+  if (!last) return;
+  const dx = e.clientX - last.x, dy = e.clientY - last.y;
+  if (Math.abs(dx)+Math.abs(dy) > 2) moved = true;
+  if (dragNode) { const p = toWorld(e); dragNode.x = p.x; dragNode.y = p.y; alpha = Math.max(alpha, 0.3); }
+  else if (panning) { view.x += dx; view.y += dy; }
+  last = { x:e.clientX, y:e.clientY };
+});
+canvas.addEventListener("pointerup", e => {
+  if (!moved) { const n = pick(toWorld(e)); selected = (n === selected) ? null : n; showDetails(selected); }
+  dragNode = null; panning = false; last = null; canvas.style.cursor = "grab";
+});
+canvas.addEventListener("wheel", e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX-rect.left, my = e.clientY-rect.top;
+  const k2 = Math.min(4, Math.max(0.2, view.k * (e.deltaY < 0 ? 1.12 : 0.89)));
+  view.x = mx - (mx - view.x) * k2/view.k; view.y = my - (my - view.y) * k2/view.k; view.k = k2;
+}, { passive:false });
+
+function showDetails(n) {
+  const el = document.getElementById("details");
+  if (!n) { el.innerHTML = '<p style="font-size:12.5px;color:var(--muted)">Click any node to inspect its connections, spend and risk profile.</p>'; return; }
+  let html = `<h2 style="color:${COLORS[n.type]}">${esc(n.name)}</h2><div class="kv"><b>Type</b><span>${n.type}</span></div>`;
+  if (n.type === "contract" && n.contract) {
+    const c = n.contract;
+    html += kv("Supplier", c.supplier) + kv("Category", c.category) + kv("Department", c.department)
+         + kv("Owner", c.owner || "⚠ no owner") + kv("Annual value", fmtMoney(c.value))
+         + kv("Start", c.start ? c.start.toISOString().slice(0,10) : "—")
+         + kv("End", c.end ? c.end.toISOString().slice(0,10) : "—") + kv("Status", c.status || "—");
+    if (c.end) { const d = Math.round((c.end - new Date())/864e5); html += kv("Days to expiry", d < 0 ? "expired "+(-d)+"d ago" : d+"d"); }
+  } else {
+    html += kv("Linked contracts", n.contracts.length) + kv("Total annual spend", fmtMoney(n.value));
+    const conns = {};
+    for (const nb of n.neighbors) (conns[nb.type] = conns[nb.type] || []).push(nb.name);
+    for (const [t, names] of Object.entries(conns)) if (t !== "contract")
+      html += `<div style="margin-top:8px;font-size:12px;color:var(--muted)">${TYPE_LABELS[t]}:</div>` + names.slice(0,15).map(x=>`<span class="chip">${esc(x)}</span>`).join("");
+  }
+  el.innerHTML = html;
+}
+function kv(k,v){ return `<div class="kv"><b>${k}</b><span>${esc(String(v))}</span></div>`; }
+function esc(s){ return s.replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+/* ---------- Legend / filters ---------- */
+function buildLegend() {
+  document.getElementById("legend").innerHTML = Object.entries(TYPE_LABELS).map(([t,l]) =>
+    `<label><input type="checkbox" data-type="${t}" ${visibleTypes[t]?"checked":""}><span class="dot" style="background:${COLORS[t]}"></span>${l} <span style="opacity:.6">(${nodes.filter(n=>n.type===t).length})</span></label>`).join("");
+  document.querySelectorAll("#legend input").forEach(cb => cb.addEventListener("change", () => {
+    visibleTypes[cb.dataset.type] = cb.checked; alpha = Math.max(alpha, 0.5);
+    if (selected && !visibleTypes[selected.type]) { selected = null; showDetails(null); }
+  }));
+}
+
+/* ---------- Diagnostics ---------- */
+function diagnose(groupField) {
+  const groups = new Map();
+  for (const c of contracts) {
+    const g = c[groupField];
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(c);
+  }
+  const now = new Date();
+  return [...groups.entries()].map(([name, cs]) => {
+    const spend = cs.reduce((s,c) => s + (isNaN(c.value)?0:c.value), 0);
+    const suppliers = new Map();
+    for (const c of cs) suppliers.set(c.supplier, (suppliers.get(c.supplier)||0) + (isNaN(c.value)?0:c.value));
+    const topSup = [...suppliers.entries()].sort((a,b)=>b[1]-a[1])[0];
+    const conc = spend > 0 && topSup ? topSup[1]/spend : 0;
+    const exp90 = cs.filter(c => c.end && (c.end-now)/864e5 > 0 && (c.end-now)/864e5 <= 90);
+    const exp180 = cs.filter(c => c.end && (c.end-now)/864e5 > 90 && (c.end-now)/864e5 <= 180);
+    const expired = cs.filter(c => c.end && c.end < now);
+    const noOwner = cs.filter(c => !c.owner);
+    const noValue = cs.filter(c => isNaN(c.value));
+    let risk = 0;
+    risk += conc > 0.8 ? 30 : conc > 0.6 ? 15 : 0;
+    risk += Math.min(25, exp90.length * 10) + Math.min(20, expired.length * 10);
+    risk += Math.min(15, noOwner.length * 5) + Math.min(10, noValue.length * 5);
+    if (suppliers.size === 1 && cs.length > 1) risk += 10;
+    const score = Math.max(0, 100 - risk);
+    return { name, cs, spend, suppliers, topSup, conc, exp90, exp180, expired, noOwner, noValue, score };
+  }).sort((a,b) => b.spend - a.spend);
+}
+function scoreClass(s){ return s >= 80 ? "s-ok" : s >= 55 ? "s-warn" : "s-bad"; }
+function renderDiagnostics() {
+  const now = new Date();
+  const total = contracts.reduce((s,c)=>s+(isNaN(c.value)?0:c.value),0);
+  const expSoon = contracts.filter(c=>c.end && (c.end-now)/864e5>0 && (c.end-now)/864e5<=90).length;
+  const expired = contracts.filter(c=>c.end && c.end<now).length;
+  const noOwner = contracts.filter(c=>!c.owner).length;
+  const sups = new Set(contracts.map(c=>c.supplier)).size;
+  let html = `<div id="summaryBar">
+    ${stat(fmtMoney(total),"Total annual spend")}${stat(contracts.length,"Contracts")}${stat(sups,"Suppliers")}
+    ${stat(expSoon,"Expiring ≤ 90 days")}${stat(expired,"Expired contracts")}${stat(noOwner,"Missing owner")}
+  </div>`;
+  for (const [field, title] of [["category","Diagnostic per category"],["department","Diagnostic per department"]]) {
+    html += `<h2 class="section-title">${title}</h2><div class="grid">`;
+    for (const g of diagnose(field)) {
+      const flags = [];
+      if (g.conc > 0.8 && g.suppliers.size > 1) flags.push(['bad', `High supplier concentration: ${esc(g.topSup[0])} holds ${Math.round(g.conc*100)}% of spend`]);
+      if (g.suppliers.size === 1 && g.cs.length > 1) flags.push(['warn', `Single-source: all contracts with ${esc(g.topSup[0])}`]);
+      if (g.expired.length) flags.push(['bad', `${g.expired.length} expired contract(s): ${esc(g.expired.map(c=>c.name).join(", "))}`]);
+      if (g.exp90.length) flags.push(['warn', `${g.exp90.length} expiring within 90 days: ${esc(g.exp90.map(c=>c.name).join(", "))}`]);
+      if (g.exp180.length) flags.push(['warn', `${g.exp180.length} expiring in 90–180 days`]);
+      if (g.noOwner.length) flags.push(['warn', `${g.noOwner.length} contract(s) without an owner`]);
+      if (g.noValue.length) flags.push(['warn', `${g.noValue.length} contract(s) missing a value`]);
+      if (!flags.length) flags.push(['ok', "No risk flags — portfolio looks healthy"]);
+      html += `<div class="card"><span class="score ${scoreClass(g.score)}">${g.score}</span><h3>${esc(g.name)}</h3>
+        <div class="row"><span>Annual spend</span><span>${fmtMoney(g.spend)}</span></div>
+        <div class="row"><span>Contracts</span><span>${g.cs.length}</span></div>
+        <div class="row"><span>Suppliers</span><span>${g.suppliers.size}</span></div>
+        <div class="row"><span>Top supplier share</span><span>${g.spend>0?Math.round(g.conc*100)+"%":"—"}</span></div>
+        <div class="flags">${flags.map(([cls,t])=>`<div class="flag ${cls}">${cls==="ok"?"✓":"⚠"} ${t}</div>`).join("")}</div></div>`;
+    }
+    html += `</div>`;
+  }
+  document.getElementById("diagView").innerHTML = html;
+}
+function stat(v,l){ return `<div class="stat"><div class="v">${v}</div><div class="l">${l}</div></div>`; }
+
+/* ---------- Load / wire up ---------- */
+function loadCSVText(text, label) {
+  try {
+    const rows = parseCSV(text);
+    if (rows.length < 2) throw new Error("File has no data rows.");
+    contracts = rowsToContracts(rows);
+    document.getElementById("fileStatus").textContent = `${label} — ${contracts.length} contracts loaded`;
+    buildGraph(); buildLegend(); renderDiagnostics(); showDetails(null);
+  } catch (err) {
+    document.getElementById("fileStatus").textContent = "⚠ " + err.message;
+  }
+}
+document.getElementById("uploadBtn").addEventListener("click", () => document.getElementById("fileInput").click());
+document.getElementById("fileInput").addEventListener("change", e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader(); r.onload = () => loadCSVText(r.result, f.name); r.readAsText(f);
+});
+document.getElementById("sampleBtn").addEventListener("click", () => loadCSVText(SAMPLE, "Sample dataset"));
+document.querySelectorAll(".tab").forEach(t => t.addEventListener("click", () => {
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active")); t.classList.add("active");
+  const g = t.dataset.view === "graph";
+  document.getElementById("graphView").style.display = g ? "flex" : "none";
+  document.getElementById("diagView").style.display = g ? "none" : "block";
+  if (g) { resize(); alpha = Math.max(alpha, 0.3); }
+}));
+
+resize();
+loadCSVText(SAMPLE, "Sample dataset");
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
