@@ -2,7 +2,7 @@ import type { GraphNode } from '../data/types'
 import { NODE_COLORS } from '../graph/buildGraph'
 import { riskScore, riskLevel, entityRiskLevel, RISK_COLORS, daysDiff } from './risk'
 
-export type LensId = 'structure' | 'spend' | 'risk' | 'expiry' | 'concentration' | 'data'
+export type LensId = 'structure' | 'spend' | 'risk' | 'expiry' | 'concentration' | 'data' | 'gaps'
 
 export interface LensDef {
   id: LensId
@@ -51,6 +51,14 @@ export const LENSES: LensDef[] = [
     ],
   },
   {
+    id: 'gaps', label: 'Gaps', question: 'What is missing?',
+    scale: [
+      { color: '#F472B6', label: 'Touched by a gap' },
+      { color: '#831843', label: 'Phantom — should exist' },
+      { color: '#1E293B', label: 'Covered' },
+    ],
+  },
+  {
     id: 'data', label: 'Data', question: 'Can I trust this data?',
     scale: [
       { color: '#DC2626', label: 'Fields missing' },
@@ -65,6 +73,8 @@ export interface LensContext {
   totalSpend: number
   /** Node keys of the top-10 spend nodes — always labelled in the Spend lens. */
   topSpendKeys: Set<string>
+  /** Nodes touched by a structural gap, for the Gaps lens. */
+  gapKeys?: Set<string>
 }
 
 export interface LensStyle {
@@ -74,7 +84,7 @@ export interface LensStyle {
   labelAlways?: boolean
 }
 
-export function buildLensContext(nodes: GraphNode[]): LensContext {
+export function buildLensContext(nodes: GraphNode[], gapKeys?: Set<string>): LensContext {
   const maxValue = Math.max(1, ...nodes.map(n => n.value))
   const totalSpend = nodes
     .filter(n => n.type === 'contract')
@@ -82,7 +92,7 @@ export function buildLensContext(nodes: GraphNode[]): LensContext {
   const topSpendKeys = new Set(
     [...nodes].sort((a, b) => b.value - a.value).slice(0, 10).map(n => n.key)
   )
-  return { maxValue, totalSpend, topSpendKeys }
+  return { maxValue, totalSpend, topSpendKeys, gapKeys }
 }
 
 /** Linear blend between two hex colours; t clamped to 0–1. */
@@ -188,6 +198,13 @@ export function lensStyle(node: GraphNode, lens: LensId, ctx: LensContext): Lens
         ring: soleSource ? '#F59E0B' : undefined,
         labelAlways: systemic,
       }
+    }
+
+    case 'gaps': {
+      const touched = ctx.gapKeys?.has(node.key) ?? false
+      return touched
+        ? { color: '#F472B6', sizeMult: 1.25, ring: '#F472B6', labelAlways: node.type !== 'contract' }
+        : { color: '#1E293B', sizeMult: 0.8 }
     }
 
     case 'data': {
