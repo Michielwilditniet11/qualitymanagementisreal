@@ -58,7 +58,7 @@ footer{color:var(--dim);font-size:11px;text-align:center;padding:18px}
 <body>
 <header>
   <h1>ZH <span>COACH</span> — Zero Hour team playbook</h1>
-  <div class="sub">Pro rules (no superweapons / no gen-power supers, no worker or dozer rush, no base-crawl into spawn). 2v2 &amp; 2v2v2.</div>
+  <div class="sub">Pro rules (Superweapon general may build ONE superweapon; no other supers, no worker or dozer rush, no base-crawl into spawn). 2v2 &amp; 2v2v2.</div>
 </header>
 
 <div class="wrap">
@@ -117,11 +117,10 @@ const G = {
   mid:{t:"7–13 min",b:["Combat Chinook drops of Rangers/Missile Defenders","Comanches with Rocket Pods","2nd + 3rd Airfield, Countermeasures upgrade","Stealth Fighter to delete AA on the way in"],k:["Countermeasures is mandatory vs any China/GLA AA","Always send Stealth Fighter one wave ahead to clear Gattlings/Quads"]},
   late:{t:"14 min+",b:["Aurora Alpha volleys on Command Centers/production","King Raptor screen","Chinook harass in 3 corners at once"],k:["Aurora Alpha kills a structure per plane. Bank 6 and alpha-strike."]}},
 
- super:{n:"Superweapon (Alexander)",f:"USA",d:"Under pro rules: no Particle Cannon — play as a turtle/artillery general",
-  rush:{t:"None — defend to 6:00",b:["Cold Fusion, Supply Center, 2 dozers","Patriot Battery pair on the ramp + Missile Defenders inside","War Factory → 2 Crusaders to deny scouting"],k:["PRO RULES: Particle Cannon is off. You are a defensive econ general.","Your value is holding the front so your ally free-farms"]},
-  mid:{t:"9–15 min",b:["EMP Patriots (shuts down every tank push cold)","Tomahawk line behind the Patriots","Advanced Control Rods, 3rd expansion","Firebase with Missile Defenders on the choke"],k:["EMP Patriot + Tomahawk is one of the strongest defensive combos in ZH"]},
-  late:{t:"16 min+",b:["Mass Tomahawk + Paladin escort creep","Aurora on their artillery","Microwave to shut down enemy defenses on the final push"],k:["You do not win by attacking — you win by making them attack you"]}},
-
+ super:{n:"Superweapon (Alexander)",f:"USA",d:"Pro rules: ONE superweapon allowed — build it, protect it, aim it",
+  rush:{t:"None — defend to 6:00",b:["Cold Fusion, Supply Center, 2 dozers","Patriot Battery pair on the ramp + Missile Defenders inside","War Factory → 2 Crusaders to deny scouting","Start banking toward the Particle Cannon — do not overspend on army"],k:["PRO RULES: you get ONE superweapon. The Particle Cannon is your whole identity.","Survive to Particle Cannon and the game becomes yours — trade space for time"]},
+  mid:{t:"9–15 min",b:["PARTICLE CANNON as soon as you can afford it — this is the priority build","Place it deep, behind your CC, ringed with Patriots + a Firebase","EMP Patriots on the choke (shuts down every tank push cold)","Tomahawk line behind the Patriots, 3rd expansion, Advanced Control Rods"],k:["One cannon only — losing it means losing the game. Overbuild its defense.","Keep 2 spare Cold Fusion reactors: no power = no cannon"]},
+  late:{t:"16 min+",b:["Fire the cannon on PRODUCTION and artillery, never on a moving army","Sweep it across War Factories/Airfields, or across a clumped push","Mass Tomahawk + Paladin escort creep behind each cannon hit","Aurora on their artillery, Microwave on their defenses for the final push"],k:["Cannon targets, in order: enemy superweapon > production > artillery > eco","Time your ground push to land with the cannon volley, not after it"]}},
  china:{n:"China (vanilla)",f:"China",d:"Tank mass, horde bonus",
   rush:{t:"4:00–5:30",b:["Supply Center + 2nd Dozer immediately","Barracks → Red Guard pair to hold ramp / capture","War Factory → Gattling Tank first (anti-air + anti-infantry)","4 Battlemasters, get Horde bonus, then push"],k:["Never push with fewer than 4 tanks — Horde bonus is everything","Nuke Shells at ~7 min doubles your damage"]},
   mid:{t:"8–14 min",b:["Propaganda Center → Nationalism + Nuke Shells","Overlord with Gattling upgrade","Bunker + Gattling on your choke","2nd War Factory, keep 8+ Battlemasters alive"],k:["Overlord + Gattling escort beats almost any pure tank ball"]},
@@ -177,10 +176,10 @@ const C = {
   early:["AA in the first 5 minutes or you lose your dozers/workers","Gattling Tank / Quad Cannon / Missile Defender — build 2, not 1"],
   mid:["They have NO tanks. Any ground push kills them if it reaches the base.","Attack constantly — a defending Air Force general is a losing one"],
   late:["Spread structures — Aurora one-shots buildings","Kill their airfields with a ground rush, not with your own air"]},
- super:{th:"Turtle + EMP Patriot + Tomahawk. (Supers off under pro rules.)",
-  early:["Deny expansions — their whole plan is safe income","Rush early: they build defense before army"],
-  mid:["EMP Patriot disables tanks — send infantry or artillery, not a tank ball","Out-range Patriots with artillery instead of walking into them"],
-  late:["Never attack into the front. Go around, hit expansions and power.","Kill Tomahawk trucks with fast flankers — they are unarmoured"]},
+ super:{th:"Turtles to ONE Particle Cannon, behind EMP Patriots + Tomahawks.",
+  early:["Deny expansions — their whole plan is safe income into the cannon","Rush early: they build defense before army, and they are saving money"],
+  mid:["Scout for the Particle Cannon the moment they hit ~10 min. Find it, then plan to kill it.","EMP Patriot disables tanks — send infantry or artillery, not a tank ball","Out-range Patriots with artillery instead of walking into them"],
+  late:["Never clump. One cannon sweep through a stacked army ends the game.","Spread production across the map so a single sweep can't cripple you","Kill the cannon or kill their power — a raid on Cold Fusion reactors buys you minutes","Air or a stealth/sneak-attack drop is usually the only way in past the front"]},
  china:{th:"Battlemaster horde, then Overlords.",
   early:["Don't fight the horde head-on under 6 tanks of your own","Rocket infantry in a garrison beats early Battlemasters"],
   mid:["Kill Speaker Tower Overlords first — they heal everything","Gattling Tanks mean your air needs escorts or numbers"],
