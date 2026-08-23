@@ -239,6 +239,27 @@ describe('generateInsights', () => {
   it('sums value at risk across distinct critical findings', () => {
     const cs = [contract({ endDate: inDays(-10), annualValue: 30_000 })]
     const out = generateInsights(cs)
-    expect(totalValueAtRisk(out)).toBeGreaterThan(0)
+    expect(totalValueAtRisk(out, cs)).toBe(30_000)
+  })
+
+  it('counts a contract once even when several critical findings flag it', () => {
+    // Expired *and* unowned — two critical findings over the same contract.
+    const cs = [contract({ name: 'Double', endDate: inDays(-10), owner: undefined, annualValue: 40_000 })]
+    const out = generateInsights(cs)
+    expect(out.filter(i => i.severity === 'critical').length).toBeGreaterThan(1)
+    expect(totalValueAtRisk(out, cs)).toBe(40_000)
+  })
+
+  it('never reports more at risk than the portfolio is worth', () => {
+    const cs = [
+      contract({ name: 'X', endDate: inDays(-5), owner: undefined, annualValue: 10_000 }),
+      contract({ name: 'Y', endDate: inDays(-5), annualValue: 20_000 }),
+    ]
+    const totalSpend = 30_000
+    expect(totalValueAtRisk(generateInsights(cs), cs)).toBeLessThanOrEqual(totalSpend)
+  })
+
+  it('reports nothing at risk when there are no critical findings', () => {
+    expect(totalValueAtRisk([], [])).toBe(0)
   })
 })

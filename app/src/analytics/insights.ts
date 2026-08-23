@@ -298,16 +298,25 @@ export function generateInsights(contracts: Contract[]): Insight[] {
   })
 }
 
-/** Total exposure flagged by critical findings, de-duplicated by contract node. */
-export function totalValueAtRisk(insights: Insight[]): number {
-  const seen = new Set<string>()
-  let total = 0
+/**
+ * Total exposure flagged by critical findings. Counts each contract once even
+ * when several findings flag it, so the headline figure cannot exceed spend.
+ */
+export function totalValueAtRisk(insights: Insight[], contracts: Contract[]): number {
+  const flagged = new Set<string>()
   for (const i of insights) {
-    if (i.severity !== 'critical' || !i.valueAtRisk) continue
-    const id = i.nodeKeys.filter(k => k.startsWith('contract::')).sort().join('|')
-    if (seen.has(id)) continue
-    seen.add(id)
-    total += i.valueAtRisk
+    if (i.severity !== 'critical') continue
+    for (const k of i.nodeKeys) {
+      if (k.startsWith('contract::')) flagged.add(k.slice('contract::'.length))
+    }
+  }
+  if (flagged.size === 0) return 0
+  const counted = new Set<string>()
+  let total = 0
+  for (const c of contracts) {
+    if (!flagged.has(c.name) || counted.has(c.id)) continue
+    counted.add(c.id)
+    total += c.annualValue ?? 0
   }
   return total
 }

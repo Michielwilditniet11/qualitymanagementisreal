@@ -20,6 +20,7 @@ export default function WebScreen() {
   const [lens, setLens] = useState<LensId>('structure')
   const [activeInsight, setActiveInsight] = useState<Insight | null>(null)
   const [focusNode, setFocusNode] = useState<GraphNode | null>(null)
+  const [showKpis, setShowKpis] = useState(true)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
   const insights = useMemo(() => generateInsights(contracts), [contracts])
@@ -29,6 +30,31 @@ export default function WebScreen() {
     const known = new Set(nodes.map(n => n.key))
     return new Set(activeInsight.nodeKeys.filter(k => known.has(k)))
   }, [activeInsight, nodes])
+
+  const kpis = useMemo(() => {
+    const totalSpend = contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0)
+    const expiring = contracts.filter(c => c.endDate && daysDiff(c.endDate) > 0 && daysDiff(c.endDate) <= 90)
+    const singleSourced = new Set(
+      insights.filter(i => i.id.startsWith('single-source:')).map(i => i.id)
+    ).size
+    const fields = ['supplier', 'category', 'department', 'owner', 'annualValue', 'endDate'] as const
+    let filled = 0, total = 0
+    for (const c of contracts) {
+      for (const f of fields) {
+        total++
+        const has = f === 'annualValue' ? c.annualValue !== undefined : Boolean((c as any)[f])
+        if (has) filled++
+      }
+    }
+    return {
+      totalSpend,
+      atRisk: totalValueAtRisk(insights, contracts),
+      expiringCount: expiring.length,
+      expiringValue: expiring.reduce((s, c) => s + (c.annualValue ?? 0), 0),
+      singleSourced,
+      confidence: total > 0 ? Math.round((filled / total) * 100) : 100,
+    }
+  }, [contracts, insights])
 
   const openInsight = (i: Insight) => {
     if (activeInsight?.id === i.id) { setActiveInsight(null); return }
@@ -61,6 +87,40 @@ export default function WebScreen() {
     <div className="flex-1 flex min-h-0">
       {/* Canvas area */}
       <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden" onClick={handleLegendChange as any}>
+        {/* Executive KPI strip */}
+        <div className="border-b" style={{ background: '#060A14', borderColor: '#1E293B' }}>
+          <div className="flex items-stretch">
+            {showKpis && (
+              <div className="flex-1 flex items-stretch flex-wrap">
+                <Kpi label="Total annual spend" value={fmtK(kpis.totalSpend)} color="#E2E8F0"
+                  onClick={() => setLens('spend')} hint="Show spend lens" />
+                <Kpi label="Value at risk" value={fmtK(kpis.atRisk)} color="#DC2626"
+                  onClick={() => setLens('risk')} hint="Show risk lens" />
+                <Kpi label="Expiring ≤ 90 days"
+                  value={`${kpis.expiringCount} · ${fmtK(kpis.expiringValue)}`} color="#D97706"
+                  onClick={() => { setLens('expiry'); setHighlightExpiring(90) }} hint="Show expiry lens" />
+                <Kpi label="Single-sourced categories" value={String(kpis.singleSourced)} color="#C026D3"
+                  onClick={() => setLens('concentration')} hint="Show concentration lens" />
+                <Kpi label="Data confidence" value={`${kpis.confidence}%`}
+                  color={kpis.confidence >= 90 ? '#10B981' : kpis.confidence >= 70 ? '#D97706' : '#DC2626'}
+                  onClick={() => setLens('data')} hint="Show data lens" />
+              </div>
+            )}
+            {!showKpis && (
+              <div className="flex-1 flex items-center px-4 py-1.5">
+                <span className="text-[10px]" style={{ color: '#475569' }}>
+                  {fmtK(kpis.totalSpend)} total · {fmtK(kpis.atRisk)} at risk · {kpis.confidence}% data confidence
+                </span>
+              </div>
+            )}
+            <button onClick={() => setShowKpis(v => !v)}
+              className="px-3 text-[10px] cursor-pointer hover:text-white flex-shrink-0"
+              style={{ color: '#475569', borderLeft: '1px solid #1E293B' }}>
+              {showKpis ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+
         {/* Lens selector */}
         <div className="flex items-center gap-2 px-4 py-2 border-b flex-wrap" style={{ background: '#080C14', borderColor: '#1E293B' }}>
           <span className="text-[9px] font-semibold tracking-wider mr-1" style={{ color: '#475569' }}>LENS</span>
@@ -147,6 +207,19 @@ export default function WebScreen() {
   )
 }
 
+function Kpi({ label, value, color, onClick, hint }: {
+  label: string; value: string; color: string; onClick: () => void; hint: string
+}) {
+  return (
+    <button onClick={onClick} title={hint}
+      className="px-4 py-1.5 text-left cursor-pointer transition-colors hover:bg-[#0F172A] flex-shrink-0"
+      style={{ borderRight: '1px solid #1E293B' }}>
+      <div className="text-[8px] uppercase tracking-wider" style={{ color: '#475569' }}>{label}</div>
+      <div className="text-[13px] font-semibold tabular-nums leading-tight" style={{ color }}>{value}</div>
+    </button>
+  )
+}
+
 const SEVERITY_COLORS: Record<string, string> = {
   critical: '#DC2626', warning: '#D97706', info: '#0EA5E9',
 }
@@ -162,7 +235,7 @@ function InsightsPanel({ nodes, links, contracts, insights, active, onOpen, onCl
   onSelectNode: (n: GraphNode) => void
 }) {
   const totalSpend = contracts.reduce((s: number, c: any) => s + (c.annualValue ?? 0), 0)
-  const atRisk = useMemo(() => totalValueAtRisk(insights), [insights])
+  const atRisk = useMemo(() => totalValueAtRisk(insights, contracts), [insights, contracts])
 
   const topSuppliers = useMemo(() => computeCentrality(nodes, 'supplier').slice(0, 5), [nodes])
   const topOwners = useMemo(() => computeCentrality(nodes, 'owner').slice(0, 5), [nodes])
