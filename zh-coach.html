@@ -2,105 +2,109 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ZH Coach — Zero Hour 2v2 Playbook</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>ZH Coach</title>
 <style>
 :root{
-  --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2b313d;
-  --txt:#e6e9ef; --dim:#9aa4b5; --acc:#e0a52b; --usa:#4d9de0; --china:#e05555; --gla:#7bbf5a;
-  --good:#5cc46a; --warn:#e0a52b; --bad:#e05555;
+  --bg:#0f1115;--pan:#181c24;--pan2:#212734;--line:#303748;
+  --txt:#eef1f6;--dim:#98a3b6;--acc:#f0b429;
+  --usa:#4d9de0;--china:#e05555;--gla:#7bbf5a;
+  --good:#5cc46a;--warn:#f0b429;--bad:#f0544f;
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--txt);font:15px/1.5 "Segoe UI",Roboto,system-ui,sans-serif}
-header{padding:14px 18px;background:linear-gradient(90deg,#1b1f27,#12151b);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
-h1{margin:0;font-size:18px;letter-spacing:.5px}
-h1 span{color:var(--acc)}
-.sub{color:var(--dim);font-size:12px;margin-top:2px}
-.wrap{max-width:1180px;margin:0 auto;padding:16px}
-.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
-.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.seg button{background:var(--panel);color:var(--dim);border:0;padding:8px 14px;cursor:pointer;font-size:13px}
-.seg button.on{background:var(--acc);color:#161616;font-weight:600}
-label.lbl{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.6px}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
-.gcard{background:var(--panel);border:1px solid var(--line);border-left-width:4px;border-radius:8px;padding:9px 11px;cursor:pointer;transition:.12s}
-.gcard:hover{background:var(--panel2);transform:translateY(-1px)}
-.gcard.on{outline:2px solid var(--acc);background:var(--panel2)}
-.gcard.dis{opacity:.35;cursor:default;transform:none}
-.gcard b{display:block;font-size:13px}
-.gcard small{color:var(--dim);font-size:11px}
-.f-USA{border-left-color:var(--usa)} .f-China{border-left-color:var(--china)} .f-GLA{border-left-color:var(--gla)}
-section.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
-section.card h2{margin:0 0 8px;font-size:14px;letter-spacing:.8px;text-transform:uppercase;color:var(--acc)}
-.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
-ul{margin:6px 0;padding-left:18px} li{margin:3px 0}
-.bo{list-style:none;padding:0;counter-reset:s}
-.bo li{counter-increment:s;padding:5px 8px 5px 34px;position:relative;border-bottom:1px solid var(--line);font-size:14px}
-.bo li:last-child{border:0}
-.bo li:before{content:counter(s);position:absolute;left:8px;top:5px;width:18px;height:18px;border-radius:50%;background:var(--acc);color:#161616;font-size:11px;font-weight:700;text-align:center;line-height:18px}
-.tm{color:var(--acc);font-weight:600;font-size:12px}
-.pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;border:1px solid var(--line);background:var(--panel2);margin:2px 4px 2px 0}
-.pill.good{border-color:var(--good);color:var(--good)} .pill.bad{border-color:var(--bad);color:var(--bad)} .pill.warn{border-color:var(--warn);color:var(--warn)}
-.note{background:var(--panel2);border-left:3px solid var(--acc);padding:8px 12px;border-radius:0 6px 6px 0;font-size:13px;margin:8px 0}
-.threat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:8px}
-.threat h4{margin:0 0 4px;font-size:13px}
-.threat h4 .en{color:var(--bad)}
-.empty{color:var(--dim);text-align:center;padding:26px;font-style:italic}
-.hide{display:none}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
-.tabs button{background:var(--panel2);border:1px solid var(--line);color:var(--dim);padding:7px 13px;border-radius:7px;cursor:pointer;font-size:13px}
-.tabs button.on{background:var(--acc);color:#161616;border-color:var(--acc);font-weight:600}
-.clr{background:none;border:1px solid var(--line);color:var(--dim);padding:6px 12px;border-radius:7px;cursor:pointer;font-size:12px}
-footer{color:var(--dim);font-size:11px;text-align:center;padding:18px}
-@media (max-width:600px){.wrap{padding:10px}.grid{grid-template-columns:repeat(auto-fill,minmax(130px,1fr))}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0}
+body{background:var(--bg);color:var(--txt);font:16px/1.55 system-ui,"Segoe UI",Roboto,sans-serif;padding-bottom:40px}
+.wrap{max-width:1000px;margin:0 auto;padding:0 12px}
+
+/* sticky control bar */
+.top{position:sticky;top:0;z-index:30;background:#12151c;border-bottom:1px solid var(--line);padding:8px 0}
+.top .wrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto}
+.seg button{background:var(--pan);color:var(--dim);border:0;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;min-height:42px}
+.seg button.on{background:var(--acc);color:#14161b}
+.ghost{background:var(--pan);border:1px solid var(--line);color:var(--dim);border-radius:10px;padding:10px 14px;font-size:14px;cursor:pointer;min-height:42px;margin-left:auto}
+
+/* selection chips */
+.chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 0}
+.chip{display:flex;align-items:center;gap:7px;background:var(--pan2);border:1px solid var(--line);border-left:4px solid var(--line);border-radius:10px;padding:7px 12px;font-size:14px;font-weight:600;cursor:pointer;min-height:40px}
+.chip svg{width:20px;height:20px;flex:0 0 auto}
+.chip .x{color:var(--dim);font-weight:400;margin-left:2px}
+.chip.add{border-style:dashed;color:var(--dim);font-weight:500}
+.chip.lab{background:none;border:0;color:var(--dim);font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:0 2px;cursor:default;min-height:0}
+
+/* picker */
+.pick{background:var(--pan);border:1px solid var(--line);border-radius:14px;padding:12px;margin:10px 0}
+.pick h2{margin:0 0 10px;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
+.fac{margin-bottom:12px}
+.fac:last-child{margin:0}
+.fac b{display:block;font-size:11px;letter-spacing:1.4px;color:var(--dim);margin:0 0 6px 2px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.tile{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  background:var(--pan2);border:1px solid var(--line);border-radius:14px;padding:12px 4px;
+  cursor:pointer;font-size:13px;font-weight:700;text-align:center;line-height:1.2;min-height:84px;color:var(--txt)}
+.tile svg{width:30px;height:30px}
+.tile:active{transform:scale(.96)}
+.tile.on{background:var(--acc);color:#14161b;border-color:var(--acc)}
+.tile.on svg{stroke:#14161b;fill:none}
+.tile.off{opacity:.3}
+.f-USA{border-color:#2b4a68} .f-China{border-color:#68302f} .f-GLA{border-color:#3d5c30}
+svg{stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+
+/* alerts */
+.alert{border-radius:12px;padding:11px 14px;margin:8px 0;font-size:15px;font-weight:600;display:flex;gap:10px;align-items:flex-start}
+.alert.bad{background:#3a1a19;border-left:5px solid var(--bad);color:#ffc9c7}
+.alert.warn{background:#3a2f12;border-left:5px solid var(--warn);color:#ffe3a3}
+.alert.good{background:#16301c;border-left:5px solid var(--good);color:#bff0c6}
+
+/* phase tabs + panel */
+.phases{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:12px 0 0}
+.phases button{background:var(--pan);border:1px solid var(--line);color:var(--dim);border-radius:12px 12px 0 0;
+  padding:11px 6px;font-size:14px;font-weight:700;cursor:pointer;min-height:48px;line-height:1.2}
+.phases button.on{background:var(--pan2);color:var(--acc);border-bottom-color:var(--pan2)}
+.phases small{display:block;font-size:11px;font-weight:500;color:var(--dim)}
+.phases button.on small{color:var(--acc);opacity:.8}
+.panel{background:var(--pan2);border:1px solid var(--line);border-top:0;border-radius:0 0 14px 14px;padding:14px}
+.panel h3{margin:0 0 8px;font-size:12px;letter-spacing:1.2px;text-transform:uppercase;color:var(--acc)}
+ol.bo{list-style:none;margin:0 0 14px;padding:0;counter-reset:s}
+ol.bo li{counter-increment:s;position:relative;padding:9px 4px 9px 38px;border-bottom:1px solid var(--line);font-size:15.5px}
+ol.bo li:last-child{border:0}
+ol.bo li:before{content:counter(s);position:absolute;left:2px;top:9px;width:24px;height:24px;border-radius:8px;
+  background:var(--acc);color:#14161b;font-size:13px;font-weight:800;text-align:center;line-height:24px}
+ul.key{margin:0;padding:0;list-style:none}
+ul.key li{position:relative;padding:6px 4px 6px 20px;font-size:14.5px;color:var(--dim)}
+ul.key li:before{content:"";position:absolute;left:4px;top:14px;width:7px;height:7px;border-radius:50%;background:var(--acc)}
+.tag{display:inline-block;color:var(--dim);font-weight:500;letter-spacing:0;text-transform:none;font-size:13px}
+.sect{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.note{background:#1a1f29;border-left:4px solid var(--acc);border-radius:0 8px 8px 0;padding:9px 12px;font-size:14.5px;margin:0 0 8px}
+.vs{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--bad);font-weight:800;margin:14px 0 6px}
+.vs span{color:var(--dim);font-weight:500;letter-spacing:0;text-transform:none;font-size:14px;display:block;margin-top:2px}
+.empty{color:var(--dim);text-align:center;padding:30px 10px;font-size:15px}
+@media(max-width:520px){
+  .tiles{grid-template-columns:repeat(2,1fr)}
+  .tile{min-height:92px;font-size:14px}
+  .tile svg{width:32px;height:32px}
+  body{font-size:15px}
+  .top .wrap{gap:6px}
+  .seg button{padding:10px 11px;font-size:13px}
+}
 </style>
 </head>
 <body>
-<header>
-  <h1>ZH <span>COACH</span> — Zero Hour team playbook</h1>
-  <div class="sub">Pro rules (Superweapon general may build ONE superweapon; no other supers, no worker or dozer rush, no base-crawl into spawn). 2v2 &amp; 2v2v2.</div>
-</header>
+
+<div class="top"><div class="wrap">
+  <div class="seg" id="mode"><button data-m="2v2" class="on">2v2</button><button data-m="2v2v2">2v2v2</button></div>
+  <div class="seg" id="slot"><button data-s="front" class="on">Front</button><button data-s="back">Back</button></div>
+  <button class="ghost" id="reset">Reset</button>
+</div></div>
 
 <div class="wrap">
-
-<div class="bar">
-  <span class="lbl">Mode</span>
-  <div class="seg" id="mode">
-    <button data-m="2v2" class="on">2v2</button>
-    <button data-m="2v2v2">2v2v2</button>
-  </div>
-  <span class="lbl">Map slot</span>
-  <div class="seg" id="slot">
-    <button data-s="front" class="on">Front / exposed</button>
-    <button data-s="back">Back / protected</button>
-  </div>
-  <button class="clr" id="reset">Reset all</button>
+  <div class="chips" id="chips"></div>
+  <div id="picker"></div>
+  <div id="out"></div>
 </div>
-
-<section class="card">
-  <h2>1 — Your general</h2>
-  <div class="grid" id="me"></div>
-</section>
-
-<section class="card" id="allySec">
-  <h2>2 — Your ally <small style="text-transform:none;color:var(--dim);letter-spacing:0">(optional — tunes the combo plan)</small></h2>
-  <div class="grid" id="ally"></div>
-</section>
-
-<div id="plan"><div class="empty">Pick your general to load the playbook.</div></div>
-
-<section class="card" id="enemySec">
-  <h2>3 — Enemies (pick as you scout them)</h2>
-  <div class="grid" id="enemy"></div>
-</section>
-
-<div id="counters"></div>
-
-</div>
-<footer>Timings assume 2v2 pro-rules pacing on standard money maps. Adjust ±30s for map size and starting cash.</footer>
 
 <script>
-/* ---------- DATA ---------- */
 const G = {
  usa:{n:"USA (vanilla)",f:"USA",d:"Balanced, Ranger/Humvee",
   rush:{t:"3:30–5:00",b:["Supply Center + 2nd Dozer, 2 Chinooks","Barracks → 2 Rangers for scout/capture","War Factory → 3 Humvees, load Missile Defenders","Push with 5 Humvees + Ranger, snipe supply lines","Strategy Center → Bombardment for the follow-up"],k:["Humvee-with-Missile-Defender is your rush and your AA","Never rush without a Chinook drop threat behind it"]},
@@ -223,95 +227,142 @@ const COMBO = {
  "GLA+GLA":"Both fragile to air — build Quad Cannons early on BOTH sides. Win by 12 minutes or you fall off."
 };
 
+
 const ORDER=["usa","laser","air","super","china","tank","inf","nuke","gla","toxin","demo","stealth"];
 
-/* ---------- STATE ---------- */
-const S={mode:"2v2",slot:"front",me:null,ally:null,enemies:[]};
+/* short titles + icons */
+const I={
+ star:'<svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-3-5.3 3 1.1-6L3.4 9.4l6-.8z"/></svg>',
+ bolt:'<svg viewBox="0 0 24 24"><path d="M13 2L5 13h6l-2 9 10-12h-6z"/></svg>',
+ jet:'<svg viewBox="0 0 24 24"><path d="M12 2c1.4 0 2.2 2.4 2.4 6l6.6 4v2.4l-6.6-2v4.2l2.4 2v1.8L12 20l-4.8.4v-1.8l2.4-2v-4.2l-6.6 2V12l6.6-4C9.8 4.4 10.6 2 12 2z"/></svg>',
+ sw:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v3.4M12 18.6V22M2 12h3.4M18.6 12H22M5 5l2.4 2.4M16.6 16.6L19 19M19 5l-2.4 2.4M7.4 16.6L5 19"/></svg>',
+ tank:'<svg viewBox="0 0 24 24"><rect x="2.5" y="13" width="19" height="6" rx="3"/><path d="M6 13V9.5h8V13M14 11h7.5"/><circle cx="7" cy="16" r="1"/><circle cx="12" cy="16" r="1"/><circle cx="17" cy="16" r="1"/></svg>',
+ inf:'<svg viewBox="0 0 24 24"><circle cx="9" cy="4.6" r="2.4"/><path d="M9 7.4v6M5.6 10.4h6.8M7 13.4L5.6 21M11 13.4L12.4 21M15 4.5L21 14"/></svg>',
+ atom:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><ellipse cx="12" cy="12" rx="10" ry="4.2"/><ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(60 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4.2" transform="rotate(120 12 12)"/></svg>',
+ tox:'<svg viewBox="0 0 24 24"><circle cx="12" cy="9" r="6.2"/><path d="M9.6 7.6v.01M14.4 7.6v.01M9 12.6h6"/><path d="M6.5 16.5l-1.6 4h14.2l-1.6-4"/></svg>',
+ bomb:'<svg viewBox="0 0 24 24"><circle cx="10.5" cy="14.5" r="6.5"/><path d="M15.4 10.1l2.2-2.2M17.6 7.9c0-2 1-3.4 3-3.4M14.5 5.6l1.2 1.2M20.5 9.8l-1.2-1.2"/></svg>',
+ ghost:'<svg viewBox="0 0 24 24"><path d="M4 21V9a8 8 0 0116 0v12l-2.7-2-2.7 2-2.6-2-2.6 2L6.7 19z"/><path d="M9.2 9.5v.01M14.8 9.5v.01"/></svg>',
+ truck:'<svg viewBox="0 0 24 24"><path d="M2 7h11v9H2zM13 10.5h4l4 3.5v2h-8z"/><circle cx="6" cy="18" r="1.9"/><circle cx="17" cy="18" r="1.9"/></svg>'
+};
+const M={
+ usa  :{s:"Standard",   i:I.star},
+ laser:{s:"Laser",      i:I.bolt},
+ air  :{s:"Air Force",  i:I.jet},
+ super:{s:"Superweapon",i:I.sw},
+ china:{s:"Standard",   i:I.star},
+ tank :{s:"Tank",       i:I.tank},
+ inf  :{s:"Infantry",   i:I.inf},
+ nuke :{s:"Nuke",       i:I.atom},
+ gla  :{s:"Standard",   i:I.truck},
+ toxin:{s:"Toxin",      i:I.tox},
+ demo :{s:"Demo",       i:I.bomb},
+ stealth:{s:"Stealth",  i:I.ghost}
+};
+const FAC={USA:["usa","laser","air","super"],China:["china","tank","inf","nuke"],GLA:["gla","toxin","demo","stealth"]};
+const title=k=>G[k].f+" "+M[k].s;
+
+const S={mode:"2v2",slot:"front",me:null,ally:null,en:[],ph:"rush",open:"me"};
 const maxE=()=>S.mode==="2v2"?2:4;
+const $=id=>document.getElementById(id);
 
-/* ---------- RENDER ---------- */
-function card(k,sel,dis){const g=G[k];
- return `<div class="gcard f-${g.f}${sel?" on":""}${dis?" dis":""}" data-k="${k}"><b>${g.n}</b><small>${g.d}</small></div>`;}
+function tile(k,on,off){return `<button class="tile f-${G[k].f}${on?" on":""}${off?" off":""}" data-k="${k}">${M[k].i}<span>${M[k].s}</span></button>`;}
+function tiles(sel,dis){return Object.keys(FAC).map(f=>
+  `<div class="fac"><b>${f.toUpperCase()}</b><div class="tiles">${FAC[f].map(k=>tile(k,sel(k),dis&&dis(k))).join("")}</div></div>`).join("");}
 
-function paintPickers(){
- me.innerHTML=ORDER.map(k=>card(k,S.me===k)).join("");
- ally.innerHTML=ORDER.map(k=>card(k,S.ally===k)).join("");
- enemy.innerHTML=ORDER.map(k=>card(k,S.enemies.includes(k),!S.enemies.includes(k)&&S.enemies.length>=maxE())).join("");
+function chip(k,role){return `<button class="chip" data-role="${role}" data-k="${k}" style="border-left-color:var(--${G[k].f.toLowerCase()})">${M[k].i}<span>${title(k)}</span><span class="x">✕</span></button>`;}
+
+function drawChips(){
+  let h=`<span class="chip lab">You</span>`;
+  h+= S.me?chip(S.me,"me"):`<button class="chip add" data-open="me">+ pick your general</button>`;
+  h+=`<span class="chip lab">Ally</span>`;
+  h+= S.ally?chip(S.ally,"ally"):`<button class="chip add" data-open="ally">+ ally</button>`;
+  h+=`<span class="chip lab">Enemy</span>`;
+  h+= S.en.map(k=>chip(k,"en")).join("");
+  if(S.en.length<maxE())h+=`<button class="chip add" data-open="en">+ enemy</button>`;
+  $('chips').innerHTML=h;
+}
+
+function drawPicker(){
+  const o=S.open;
+  if(!o){$('picker').innerHTML="";return;}
+  const t={me:"Pick your general",ally:"Pick your ally",en:"Pick enemies you've scouted"}[o];
+  const sel=o==="me"?k=>k===S.me:o==="ally"?k=>k===S.ally:k=>S.en.includes(k);
+  const dis=o==="en"?k=>!S.en.includes(k)&&S.en.length>=maxE():null;
+  $('picker').innerHTML=`<div class="pick"><h2>${t}</h2>${tiles(sel,dis)}</div>`;
 }
 
 function li(a){return a.map(x=>`<li>${x}</li>`).join("")}
 
-function paintPlan(){
- if(!S.me){plan.innerHTML='<div class="empty">Pick your general to load the playbook.</div>';return;}
- const g=G[S.me];
- const slotNote=S.slot==="front"
-  ? "FRONT SLOT: you are the wall. Build your first defensive structure before your second expansion, and expect the enemy rush to come at you first."
-  : "BACK SLOT: you are the economy and the tech. Take the second supply early, build the expensive units, and reinforce your ally's front — do not build a full defensive line you'll never need.";
- const modeNote=S.mode==="2v2v2"
-  ? "2v2v2: never commit your whole army — the third team punishes whoever spends first. Let the other two teams open the fighting, then hit the weakened winner. Keep 30% of your army home at all times."
-  : "2v2: tempo game. Attack the same enemy your ally attacks, at the same time. Two split pushes lose to one focused one.";
- let combo="";
- if(S.ally){const p=[G[S.me].f,G[S.ally].f].sort().join("+");combo=`<div class="note"><b>Team combo — ${G[S.me].n} + ${G[S.ally].n}:</b> ${COMBO[p]}</div>`;}
- plan.innerHTML=`
- <section class="card">
-  <h2>Playbook — ${g.n}</h2>
-  <div class="note">${modeNote}</div>
-  <div class="note">${slotNote}</div>
-  ${combo}
-  <div class="cols">
-   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">RUSH / OPENING <span class="tm">${g.rush.t}</span></h3>
-     <ol class="bo">${li(g.rush.b)}</ol><ul>${li(g.rush.k)}</ul></div>
-   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">MID GAME <span class="tm">${g.mid.t}</span></h3>
-     <ol class="bo">${li(g.mid.b)}</ol><ul>${li(g.mid.k)}</ul></div>
-   <div><h3 style="font-size:13px;color:var(--acc);margin:6px 0">LATE GAME <span class="tm">${g.late.t}</span></h3>
-     <ol class="bo">${li(g.late.b)}</ol><ul>${li(g.late.k)}</ul></div>
-  </div>
- </section>`;
+function drawOut(){
+  if(!S.me){$('out').innerHTML='<div class="empty">Pick your general to load the playbook.</div>';return;}
+  const g=G[S.me],p=g[S.ph];
+  const has=x=>S.en.includes(x);
+  let al=[];
+  if(has("tank")||has("inf"))al.push(['bad','RUSH INCOMING — real defense up by 4:00. Do not double-expand.']);
+  if(has("air"))al.push(['bad','AA before 5:00 or you lose dozers/workers to Raptors.']);
+  if(has("stealth")||has("demo"))al.push(['warn','Get detection early. Scout your own ground before moving out.']);
+  if(has("laser"))al.push(['warn','Rush Laser early. Later: no rockets/Scuds into Avengers.']);
+  if(has("super"))al.push(['warn','Particle Cannon incoming ~10 min — spread production, never clump.']);
+  if(has("nuke"))al.push(['warn','Nuke Cannons out-range you. Flank and deny income, don\'t push the front.']);
+  if(has("toxin"))al.push(['warn','Lead with vehicles, not infantry.']);
+  if(S.en.length&&!al.length)al.push(['good','No hard early threat — take the map and play the greedy build.']);
+
+  const modeN=S.mode==="2v2v2"
+   ?"2v2v2 — never commit everything. Let the other two teams fight first, keep 30% home."
+   :"2v2 — attack the SAME enemy as your ally, at the SAME time. Split pushes lose.";
+  const slotN=S.slot==="front"
+   ?"FRONT — you're the wall. Defense before your 2nd expansion; the rush comes at you."
+   :"BACK — you're eco and tech. 2nd supply early, expensive units, reinforce your ally.";
+  let combo="";
+  if(S.ally){const a=g.f,b=G[S.ally].f;const txt=COMBO[a+"+"+b]||COMBO[b+"+"+a]||"";
+    if(txt)combo=`<div class="note"><b>${title(S.me)} + ${title(S.ally)}:</b> ${txt}</div>`;}
+
+  const vs=S.en.map(k=>{const c=C[k],ph=S.ph==="rush"?c.early:S.ph==="mid"?c.mid:c.late;
+    return `<div class="vs">vs ${title(k)}<span>${c.th}</span></div><ul class="key">${li(ph)}</ul>`;}).join("");
+
+  $('out').innerHTML=
+   al.map(a=>`<div class="alert ${a[0]}">${a[1]}</div>`).join("")+
+   `<div class="phases" id="ph">
+      ${["rush","mid","late"].map(x=>`<button data-p="${x}" class="${S.ph===x?"on":""}">${{rush:"RUSH",mid:"MID",late:"LATE"}[x]}<small>${g[x].t.split("—")[0].trim()}</small></button>`).join("")}
+    </div>
+    <div class="panel">
+      <h3>${{rush:"Opening / rush",mid:"Mid game",late:"Late game"}[S.ph]} — ${p.t.split("—")[0].trim()}${p.t.includes("—")?` <span class="tag">${p.t.split("—").slice(1).join("—").trim()}</span>`:""}</h3>
+      <ol class="bo">${li(p.b)}</ol>
+      <ul class="key">${li(p.k)}</ul>
+      ${vs?`<div class="sect">${vs}</div>`:""}
+      <div class="sect"><h3>Team context</h3>
+        <div class="note">${modeN}</div><div class="note">${slotN}</div>${combo}</div>
+    </div>`;
+  $('ph').onclick=e=>{const b=e.target.closest("button");if(!b)return;S.ph=b.dataset.p;drawOut();};
 }
 
-function paintCounters(){
- if(!S.enemies.length){counters.innerHTML='<div class="empty">Pick enemy generals as you scout them for counter-play.</div>';return;}
- const blocks=S.enemies.map(k=>{const g=G[k],c=C[k];
-  return `<div class="threat">
-   <h4><span class="en">${g.n}</span> — ${c.th}</h4>
-   <div class="cols">
-    <div><b style="font-size:12px;color:var(--dim)">EARLY</b><ul>${li(c.early)}</ul></div>
-    <div><b style="font-size:12px;color:var(--dim)">MID</b><ul>${li(c.mid)}</ul></div>
-    <div><b style="font-size:12px;color:var(--dim)">LATE</b><ul>${li(c.late)}</ul></div>
-   </div></div>`;}).join("");
+function draw(){drawChips();drawPicker();drawOut();}
 
- // priority read
- const has=x=>S.enemies.includes(x);
- const p=[];
- if(has("tank")||has("inf"))p.push(['bad','RUSH INCOMING — have real defense up by 4:00. Do not double-expand.']);
- if(has("air"))p.push(['bad','AA before 5:00 or you lose your dozers/workers to Raptors.']);
- if(has("stealth")||has("demo"))p.push(['warn','Get detection early and scout your own ground before moving out.']);
- if(has("laser"))p.push(['warn','Rush the Laser general early; later, never send rockets/Scuds into Avengers.']);
- if(has("super")||has("nuke"))p.push(['warn','They out-range you. Flank, expand, and deny income instead of pushing the front.']);
- if(has("toxin"))p.push(['warn','Lead with vehicles, not infantry.']);
- if(!p.length)p.push(['good','No hard early threat. Take the map and expand — you can afford the greedier build.']);
+$('chips').onclick=e=>{
+  const a=e.target.closest("[data-open]");
+  if(a){S.open=S.open===a.dataset.open?null:a.dataset.open;drawPicker();return;}
+  const c=e.target.closest(".chip[data-k]");
+  if(!c)return;
+  const r=c.dataset.role;
+  if(r==="me")S.me=null; else if(r==="ally")S.ally=null; else S.en=S.en.filter(x=>x!==c.dataset.k);
+  S.open=r;draw();
+};
+$('picker').onclick=e=>{
+  const t=e.target.closest(".tile");if(!t||t.classList.contains("off"))return;
+  const k=t.dataset.k;
+  if(S.open==="me"){S.me=S.me===k?null:k;S.open=S.me?(S.ally?null:"ally"):"me";}
+  else if(S.open==="ally"){S.ally=S.ally===k?null:k;S.open=S.ally?null:"ally";}
+  else{S.en.includes(k)?S.en=S.en.filter(x=>x!==k):S.en.push(k); if(S.en.length>=maxE())S.open=null;}
+  draw();window.scrollTo({top:0,behavior:"smooth"});
+};
+$('mode').onclick=e=>{const b=e.target.closest("button");if(!b)return;
+  S.mode=b.dataset.m;[...$('mode').children].forEach(x=>x.classList.toggle("on",x===b));
+  S.en=S.en.slice(0,maxE());draw();};
+$('slot').onclick=e=>{const b=e.target.closest("button");if(!b)return;
+  S.slot=b.dataset.s;[...$('slot').children].forEach(x=>x.classList.toggle("on",x===b));draw();};
+$('reset').onclick=()=>{S.me=S.ally=null;S.en=[];S.ph="rush";S.open="me";draw();};
 
- counters.innerHTML=`<section class="card"><h2>Counter-play vs scouted enemies</h2>
-  <div>${p.map(x=>`<span class="pill ${x[0]}">${x[1]}</span>`).join("")}</div>
-  <div style="margin-top:10px">${blocks}</div></section>`;
-}
-
-function paintAll(){paintPickers();paintPlan();paintCounters();}
-
-/* ---------- EVENTS ---------- */
-me.onclick=e=>{const c=e.target.closest(".gcard");if(!c)return;S.me=S.me===c.dataset.k?null:c.dataset.k;paintAll();};
-ally.onclick=e=>{const c=e.target.closest(".gcard");if(!c)return;S.ally=S.ally===c.dataset.k?null:c.dataset.k;paintAll();};
-enemy.onclick=e=>{const c=e.target.closest(".gcard");if(!c||c.classList.contains("dis"))return;
- const k=c.dataset.k,i=S.enemies.indexOf(k);
- i>=0?S.enemies.splice(i,1):S.enemies.push(k);paintAll();};
-mode.onclick=e=>{if(e.target.tagName!=="BUTTON")return;
- S.mode=e.target.dataset.m;[...mode.children].forEach(b=>b.classList.toggle("on",b===e.target));
- S.enemies=S.enemies.slice(0,maxE());paintAll();};
-slot.onclick=e=>{if(e.target.tagName!=="BUTTON")return;
- S.slot=e.target.dataset.s;[...slot.children].forEach(b=>b.classList.toggle("on",b===e.target));paintAll();};
-reset.onclick=()=>{S.me=S.ally=null;S.enemies=[];paintAll();};
-
-paintAll();
+draw();
 </script>
 </body>
 </html>
