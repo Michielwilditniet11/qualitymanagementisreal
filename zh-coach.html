@@ -23,7 +23,9 @@ body{background:var(--bg);color:var(--txt);font:16px/1.55 system-ui,"Segoe UI",R
 .seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden;flex:0 0 auto}
 .seg button{background:var(--pan);color:var(--dim);border:0;padding:10px 14px;font-size:14px;font-weight:600;cursor:pointer;min-height:42px}
 .seg button.on{background:var(--acc);color:#14161b}
-.ghost{background:var(--pan);border:1px solid var(--line);color:var(--dim);border-radius:10px;padding:10px 14px;font-size:14px;cursor:pointer;min-height:42px;margin-left:auto}
+.ghost{background:var(--pan);border:1px solid var(--line);color:var(--dim);border-radius:10px;padding:10px 14px;font-size:14px;cursor:pointer;min-height:42px}
+#snd{margin-left:auto;min-width:46px}
+#snd.off{opacity:.45}
 
 /* selection chips */
 .chips{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 0}
@@ -95,6 +97,7 @@ ul.key li:before{content:"";position:absolute;left:4px;top:14px;width:7px;height
 <div class="top"><div class="wrap">
   <div class="seg" id="mode"><button data-m="2v2" class="on">2v2</button><button data-m="2v2v2">2v2v2</button></div>
   <div class="seg" id="slot"><button data-s="front" class="on">Front</button><button data-s="back">Back</button></div>
+  <button class="ghost" id="snd" title="Toggle sound">🔊</button>
   <button class="ghost" id="reset">Reset</button>
 </div></div>
 
@@ -261,6 +264,85 @@ const M={
 const FAC={USA:["usa","laser","air","super"],China:["china","tank","inf","nuke"],GLA:["gla","toxin","demo","stealth"]};
 const title=k=>G[k].f+" "+M[k].s;
 
+
+/* ---------- faction audio: Karplus-Strong plucked strings, no assets ---------- */
+const SND={ctx:null,on:true};
+try{SND.on=localStorage.getItem("zh-snd")!=="0"}catch(e){}
+
+function ac(){
+  if(!SND.ctx){try{SND.ctx=new (window.AudioContext||window.webkitAudioContext)()}catch(e){return null}}
+  if(SND.ctx.state==="suspended")SND.ctx.resume();
+  return SND.ctx;
+}
+/* plucked string: noise burst through a tuned delay with lowpass feedback */
+function pluck(t,freq,dur,damp,bright,gain){
+  const c=SND.ctx,sr=c.sampleRate,n=Math.max(1,Math.round(sr/freq)),len=Math.ceil(sr*dur);
+  const buf=c.createBuffer(1,len,sr),d=buf.getChannelData(0);
+  let last=0;
+  for(let i=0;i<len;i++){
+    let v;
+    if(i<n){ v=(Math.random()*2-1); v=last=last*(1-bright)+v*bright; }      // filtered noise burst
+    else   { v=(d[i-n]+d[i-n-1>=0?i-n-1:0])*0.5*damp; }                     // string decay
+    d[i]=v;
+  }
+  const src=c.createBufferSource();src.buffer=buf;
+  const g=c.createGain();g.gain.setValueAtTime(gain,t);
+  g.gain.setTargetAtTime(0.0001,t+dur*0.7,dur*0.18);
+  const lp=c.createBiquadFilter();lp.type="lowpass";lp.frequency.value=freq*6+1200;
+  src.connect(lp);lp.connect(g);g.connect(c.destination);
+  src.start(t);src.stop(t+dur+0.05);
+}
+/* hand drum / gong hit */
+function hit(t,freq,dur,gain,type){
+  const c=SND.ctx;
+  const o=c.createOscillator();o.type=type||"sine";
+  o.frequency.setValueAtTime(freq*2.4,t);
+  o.frequency.exponentialRampToValueAtTime(freq,t+dur*0.35);
+  const g=c.createGain();g.gain.setValueAtTime(gain,t);
+  g.gain.exponentialRampToValueAtTime(0.0001,t+dur);
+  o.connect(g);g.connect(c.destination);o.start(t);o.stop(t+dur+0.02);
+  const nb=c.createBuffer(1,c.sampleRate*0.05,c.sampleRate),nd=nb.getChannelData(0);
+  for(let i=0;i<nd.length;i++)nd[i]=(Math.random()*2-1)*(1-i/nd.length);
+  const ns=c.createBufferSource();ns.buffer=nb;
+  const ng=c.createGain();ng.gain.value=gain*0.5;
+  ns.connect(ng);ng.connect(c.destination);ns.start(t);
+}
+const HZ=n=>440*Math.pow(2,(n-69)/12);   // midi -> hz
+
+/* USA — banjo roll, G major pentatonic, bright and fast */
+const THEME={
+ USA(t){
+  const roll=[67,71,74,79,74,79,71,67,62,67];
+  roll.forEach((m,i)=>pluck(t+i*0.085,HZ(m),0.55,0.985,0.85,0.16));
+  pluck(t+0.85,HZ(55),0.7,0.99,0.6,0.14);
+  pluck(t+0.85,HZ(67),0.7,0.987,0.8,0.13);
+ },
+ /* China — guzheng, D major pentatonic, gong underneath */
+ China(t){
+  hit(t,78,1.6,0.16,"sine");
+  const mel=[74,76,78,81,83,86,83,81,78,74];
+  mel.forEach((m,i)=>pluck(t+0.06+i*0.115,HZ(m),1.1,0.9955,0.55,0.15));
+  pluck(t+1.28,HZ(62),1.6,0.997,0.45,0.13);
+  pluck(t+1.28,HZ(74),1.6,0.996,0.5,0.11);
+ },
+ /* GLA — oud on Hijaz (D Eb F# G A Bb C), darbuka pulse */
+ GLA(t){
+  [0,0.30,0.46,0.60,0.90,1.05].forEach((o,i)=>hit(t+o,i%2?150:95,0.16,0.11,"triangle"));
+  const mel=[62,63,66,67,69,67,66,63,62];
+  mel.forEach((m,i)=>pluck(t+0.05+i*0.125,HZ(m),0.95,0.9935,0.5,0.16));
+  pluck(t+1.22,HZ(50),1.5,0.996,0.4,0.15);
+  pluck(t+1.22,HZ(62),1.5,0.995,0.45,0.12);
+ }
+};
+let lastSnd=0;
+function playFaction(f){
+  if(!SND.on)return;
+  const c=ac();if(!c||!THEME[f])return;
+  if(c.currentTime-lastSnd<0.25)return;      // don't stack on rapid taps
+  lastSnd=c.currentTime;
+  try{THEME[f](c.currentTime+0.02)}catch(e){}
+}
+
 const S={mode:"2v2",slot:"front",me:null,ally:null,en:[],ph:"rush",open:"me"};
 const maxE=()=>S.mode==="2v2"?2:4;
 const $=id=>document.getElementById(id);
@@ -350,6 +432,7 @@ $('chips').onclick=e=>{
 $('picker').onclick=e=>{
   const t=e.target.closest(".tile");if(!t||t.classList.contains("off"))return;
   const k=t.dataset.k;
+  playFaction(G[k].f);
   if(S.open==="me"){S.me=S.me===k?null:k;S.open=S.me?(S.ally?null:"ally"):"me";}
   else if(S.open==="ally"){S.ally=S.ally===k?null:k;S.open=S.ally?null:"ally";}
   else{S.en.includes(k)?S.en=S.en.filter(x=>x!==k):S.en.push(k); if(S.en.length>=maxE())S.open=null;}
@@ -360,6 +443,16 @@ $('mode').onclick=e=>{const b=e.target.closest("button");if(!b)return;
   S.en=S.en.slice(0,maxE());draw();};
 $('slot').onclick=e=>{const b=e.target.closest("button");if(!b)return;
   S.slot=b.dataset.s;[...$('slot').children].forEach(x=>x.classList.toggle("on",x===b));draw();};
+$('snd').onclick=()=>{
+  SND.on=!SND.on;
+  $('snd').textContent=SND.on?"🔊":"🔇";
+  $('snd').classList.toggle("off",!SND.on);
+  try{localStorage.setItem("zh-snd",SND.on?"1":"0")}catch(e){}
+  if(SND.on)playFaction("USA");
+};
+$('snd').textContent=SND.on?"🔊":"🔇";
+$('snd').classList.toggle("off",!SND.on);
+
 $('reset').onclick=()=>{S.me=S.ally=null;S.en=[];S.ph="rush";S.open="me";draw();};
 
 draw();
