@@ -71,7 +71,16 @@ export interface GraphNode {
   contract?: Contract
 }
 
+/** How two nodes relate, named from the perspective of the entity being led to. */
+export type RelationType =
+  | 'supplies'        // …→ supplier
+  | 'owned-by'        // …→ owner
+  | 'in-category'     // …→ category
+  | 'in-department'   // …→ department
+  | 'contract-of'     // …→ contract
+
 export interface GraphLink {
   source: GraphNode
   target: GraphNode
+  relation: RelationType
 }

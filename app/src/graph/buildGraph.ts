@@ -1,4 +1,4 @@
-import type { Contract, GraphNode, GraphLink } from '../data/types'
+import type { Contract, GraphNode, GraphLink, RelationType } from '../data/types'
 
 export const NODE_COLORS: Record<string, string> = {
   department: '#4da3ff',
@@ -14,6 +14,25 @@ export const TYPE_LABELS: Record<string, string> = {
   supplier: 'Suppliers',
   owner: 'Contract owners',
   contract: 'Contracts',
+}
+
+/** The relation that leads *to* a node of this type. */
+export function relationTo(type: GraphNode['type']): RelationType {
+  switch (type) {
+    case 'supplier': return 'supplies'
+    case 'owner': return 'owned-by'
+    case 'category': return 'in-category'
+    case 'department': return 'in-department'
+    case 'contract': return 'contract-of'
+  }
+}
+
+export const RELATION_LABELS: Record<RelationType, string> = {
+  'supplies': 'supplier',
+  'owned-by': 'owner',
+  'in-category': 'category',
+  'in-department': 'department',
+  'contract-of': 'contract',
 }
 
 export function buildGraph(contracts: Contract[], w: number, h: number): { nodes: GraphNode[]; links: GraphLink[] } {
@@ -41,7 +60,9 @@ export function buildGraph(contracts: Contract[], w: number, h: number): { nodes
     const k = a.key < b.key ? `${a.key}|${b.key}` : `${b.key}|${a.key}`
     if (linkSet.has(k)) return
     linkSet.add(k)
-    links.push({ source: a, target: b })
+    // A link is named for the entity it leads to. Store it from the
+    // contract/lesser side outward so `relation` describes the target.
+    links.push({ source: a, target: b, relation: relationTo(b.type) })
     a.neighbors.add(b)
     b.neighbors.add(a)
   }
