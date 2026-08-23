@@ -1,7 +1,7 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { useDataStore } from '../../store/dataStore'
 import { buildGraph, NODE_COLORS } from '../../graph/buildGraph'
-import ForceCanvas from '../../graph/ForceCanvas'
+import PlanetaryWeb from '../../graph/PlanetaryWeb'
 import type { GraphNode } from '../../data/types'
 
 function fmtMoney(v?: number) {
@@ -24,18 +24,18 @@ export default function WebScreen() {
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
 
-  const toggleType = useCallback((t: string) => {
+  const toggleType = (t: string) => {
     setVisibleTypes(v => {
       const next = { ...v, [t]: !v[t] }
       if (selected && !next[selected.type]) setSelected(null)
       return next
     })
-  }, [selected])
+  }
 
-  const handleLegendChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLegendChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const type = e.target.dataset.type
     if (type) toggleType(type)
-  }, [toggleType])
+  }
 
   const maxSpend = Math.max(1, ...contracts.map(c => c.annualValue ?? 0))
 
@@ -69,7 +69,7 @@ export default function WebScreen() {
             </select>
           </div>
         </div>
-        <ForceCanvas
+        <PlanetaryWeb
           nodes={nodes} links={links}
           visibleTypes={visibleTypes} selected={selected}
           onSelect={setSelected}

@@ -10,6 +10,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
+    "@react-three/postprocessing": "^3.1.0",
+    "@types/three": "^0.185.4",
     "d3-force": "^3.0.0",
     "idb": "^8.0.3",
     "papaparse": "^5.6.0",
@@ -17,6 +21,7 @@
     "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "recharts": "^3.10.1",
+    "three": "^0.185.1",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.15"
   },
