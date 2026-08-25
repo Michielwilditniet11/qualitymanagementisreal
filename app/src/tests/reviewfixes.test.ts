@@ -3,9 +3,15 @@ import { buildGraph, contractKey, contractIdFromKey, entityKey } from '../graph/
 import { rowsToContracts } from '../data/parser'
 import { findGaps } from '../analytics/gaps'
 import { categoryBrief, quadrantOf } from '../analytics/kraljicBrief'
-import { computeStatsByField } from '../data/metrics'
+import { computeStatsByField, portfolioSummary } from '../data/metrics'
 import { partitionRows, timelineRows, fitWindow, decidableWithin } from '../analytics/timeline'
 import type { Contract } from '../data/types'
+import {
+  PLACEHOLDERS, fieldPresent, fieldsPresent, contractCompleteness, registerCompleteness,
+} from '../data/completeness'
+import { completeness } from '../analytics/lenses'
+import { savingsSummary } from '../analytics/savings'
+import { icsEvents, icsText } from '../features/calendar/CalendarScreen'
 
 function contract(p: Partial<Contract> & { id: string; name: string }): Contract {
   return {
@@ -198,5 +204,149 @@ describe('decidable window', () => {
     // 70 days out; 'far' ends in 300 days, so its decision date is 270 days out.
     const within90 = decidableWithin(parts.decidable, 90, now)
     expect(within90.map(r => r.contract.id)).toEqual(['near'])
+  })
+})
+
+/* ── Completeness must not count parser placeholders ─────────────────── */
+
+describe('completeness honesty', () => {
+  it('does not count a parser placeholder as a populated field', () => {
+    const blank = contract({
+      id: 'x', name: 'X',
+      supplier: PLACEHOLDERS.supplier,
+      category: PLACEHOLDERS.category,
+      department: PLACEHOLDERS.department,
+      owner: undefined, annualValue: undefined, endDate: undefined,
+    })
+    expect(fieldsPresent(blank)).toBe(0)
+    expect(contractCompleteness(blank)).toBe(0)
+  })
+
+  it('counts a real value in the same field', () => {
+    const real = contract({ id: 'y', name: 'Y', supplier: 'Acme',
+      owner: undefined, annualValue: undefined, endDate: undefined,
+      category: PLACEHOLDERS.category, department: PLACEHOLDERS.department })
+    expect(fieldPresent(real, 'supplier')).toBe(true)
+    expect(fieldPresent(real, 'category')).toBe(false)
+  })
+
+  it('reports a placeholder-only register as low quality, not high', () => {
+    const rows = [['C1', 'Only a name', '']]
+    const { contracts } = rowsToContracts(rows, { contract_id: 0, contract_name: 1 })
+    // Three fields are placeholders, three are genuinely absent.
+    expect(registerCompleteness(contracts)).toBe(0)
+    expect(portfolioSummary(contracts).dataQuality).toBe(0)
+  })
+
+  it('agrees across the summary, the insight and the lens', () => {
+    const rows = [['C1', 'A', 'Acme'], ['C2', 'B', '']]
+    const { contracts } = rowsToContracts(rows, { contract_id: 0, contract_name: 1, supplier: 2 })
+    const pct = Math.round(registerCompleteness(contracts) * 100)
+    expect(portfolioSummary(contracts).dataQuality).toBe(pct)
+    const { nodes } = buildGraph(contracts, 10, 10)
+    const contractNodes = nodes.filter(n => n.type === 'contract')
+    const lensAvg = contractNodes.reduce((s, n) => s + completeness(n), 0) / contractNodes.length
+    expect(Math.round(lensAvg * 100)).toBe(pct)
+  })
+
+  it('treats whitespace as absent', () => {
+    expect(fieldPresent(contract({ id: 'w', name: 'W', supplier: '   ' }), 'supplier')).toBe(false)
+  })
+})
+
+/* ── metrics takes an injected clock ─────────────────────────────────── */
+
+describe('metrics clock', () => {
+  const day = 86400000
+  const base = new Date('2026-06-01T00:00:00Z')
+  const register = [contract({ id: 'e', name: 'E', endDate: new Date(base.getTime() + 30 * day) })]
+
+  it('measures against the instant it is given', () => {
+    expect(portfolioSummary(register, base).expiring90).toBe(1)
+    expect(portfolioSummary(register, base).expired).toBe(0)
+  })
+
+  it('sees the same contract as expired once the clock passes it', () => {
+    const later = new Date(base.getTime() + 60 * day)
+    expect(portfolioSummary(register, later).expired).toBe(1)
+    expect(portfolioSummary(register, later).expiring90).toBe(0)
+  })
+
+  it('threads the clock into per-entity stats too', () => {
+    const later = new Date(base.getTime() + 60 * day)
+    expect(computeStatsByField(register, 'department', 'department', base)[0].expired).toHaveLength(0)
+    expect(computeStatsByField(register, 'department', 'department', later)[0].expired).toHaveLength(1)
+  })
+})
+
+/* ── Savings range cannot contradict its own components ──────────────── */
+
+describe('savings summary range', () => {
+  it('never reports a low below what one opportunity alone guarantees', () => {
+    const contracts = [contract({ id: 'c1', name: 'C1', annualValue: 100_000 })]
+    const opps = [
+      { kind: 'payment-terms', title: 'p', low: 12_000, high: 12_000,
+        contractIds: ['c1'], assumption: '' },
+      { kind: 'tail-consolidation', title: 't', low: 5_000, high: 15_000,
+        contractIds: ['c1'], assumption: '' },
+    ] as unknown as Parameters<typeof savingsSummary>[0]
+    const s = savingsSummary(opps, contracts)
+    // The payment opportunity alone guarantees 12k, so the floor cannot be 5k.
+    expect(s.low).toBeGreaterThanOrEqual(12_000)
+    expect(s.high).toBeGreaterThanOrEqual(s.low)
+  })
+
+  it('still counts each contract once, never exceeding its value', () => {
+    const contracts = [contract({ id: 'c1', name: 'C1', annualValue: 100_000 })]
+    const opps = [
+      { kind: 'a', title: 'a', low: 10_000, high: 20_000, contractIds: ['c1'], assumption: '' },
+      { kind: 'b', title: 'b', low: 30_000, high: 40_000, contractIds: ['c1'], assumption: '' },
+    ] as unknown as Parameters<typeof savingsSummary>[0]
+    expect(savingsSummary(opps, contracts).high).toBeLessThanOrEqual(100_000)
+  })
+})
+
+/* ── ICS export conforms to RFC 5545 ─────────────────────────────────── */
+
+describe('ICS export', () => {
+  const day = 86400000
+  const now = new Date('2026-06-01T00:00:00Z')
+  const awkward = contract({
+    id: 'c1', name: 'Cleaning, HQ; phase 2', supplier: 'Clean\\Co',
+    endDate: new Date(now.getTime() + 100 * day), noticePeriodDays: 30,
+  })
+  const ics = () => icsEvents(timelineRows([awkward], fitWindow([awkward], now), now))
+
+  it('escapes the separators that would truncate a value', () => {
+    expect(icsText('a, b')).toBe('a\\, b')
+    expect(icsText('a; b')).toBe('a\\; b')
+    expect(icsText('a\\b')).toBe('a\\\\b')
+    expect(icsText('a\nb')).toBe('a\\nb')
+  })
+
+  it('escapes a comma and semicolon in a real contract name', () => {
+    const summary = ics().split('\r\n').find(l => l.startsWith('SUMMARY') && l.includes('Cleaning'))!
+    expect(summary).toContain('Cleaning\\, HQ\\; phase 2')
+  })
+
+  it('escapes a backslash before anything else, so it is not doubled twice', () => {
+    expect(ics()).toContain('Clean\\\\Co')
+  })
+
+  it('gives every event a non-zero duration', () => {
+    // For DATE values DTEND is exclusive; DTSTART == DTEND is discarded by
+    // Google Calendar and Outlook.
+    const blocks = ics().split('BEGIN:VEVENT').slice(1)
+    expect(blocks.length).toBeGreaterThan(0)
+    for (const b of blocks) {
+      const start = /DTSTART;VALUE=DATE:(\d{8})/.exec(b)![1]
+      const end = /DTEND;VALUE=DATE:(\d{8})/.exec(b)![1]
+      expect(end, b.slice(0, 60)).not.toBe(start)
+      expect(Number(end)).toBeGreaterThan(Number(start))
+    }
+  })
+
+  it('still emits one event per expiry and one per notice deadline', () => {
+    expect(ics().split('BEGIN:VEVENT').length - 1).toBe(2)
   })
 })

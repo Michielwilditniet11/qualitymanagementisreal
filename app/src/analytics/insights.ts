@@ -1,6 +1,7 @@
 import type { Contract } from '../data/types'
 import { fmtK, daysDiff } from './risk'
 import { entityKey, contractKey, contractIdFromKey } from '../graph/buildGraph'
+import { registerCompleteness } from '../data/completeness'
 
 export type InsightSeverity = 'critical' | 'warning' | 'info'
 export type InsightCategory =
@@ -252,17 +253,7 @@ export function detectExpiredActive(contracts: Contract[]): Insight[] {
 /** 10. Field completeness — how much the numbers above can be trusted. */
 export function detectDataConfidence(contracts: Contract[]): Insight[] {
   if (contracts.length === 0) return []
-  const fields = ['supplier', 'category', 'department', 'owner', 'annualValue', 'endDate'] as const
-  let filled = 0
-  let total = 0
-  for (const c of contracts) {
-    for (const f of fields) {
-      total++
-      const has = f === 'annualValue' ? c.annualValue !== undefined : Boolean((c as any)[f])
-      if (has) filled++
-    }
-  }
-  const pct = Math.round((filled / total) * 100)
+  const pct = Math.round(registerCompleteness(contracts) * 100)
   if (pct >= 90) return []
   const missingValue = contracts.filter(c => c.annualValue === undefined)
   return [{

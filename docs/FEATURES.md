@@ -51,6 +51,15 @@ frame can never disagree with the panel that produced it. When the surrounding
 context is too large to show, the frame keeps the most connected nodes and the
 caption says so rather than pretending it showed everything.
 
+## Import quality
+
+Before you import, the mapper names what the file is missing under the current
+column mapping: how many rows have no owner, no annual value, no end date, an
+unparseable date, or a duplicate contract id — each with a count and an
+example. You can still import; the panel says plainly that every total will
+understate reality by whatever is listed there. Duplicate ids are reported and
+then stored distinctly, so two rows can never collapse into one contract.
+
 ## Reading the map
 
 - The default view is **fully labelled**: an importance-ranked label engine
@@ -98,7 +107,7 @@ The bar above the graph carries the five numbers worth knowing at a glance:
 | Value at risk | Annual value of contracts flagged by a **critical** finding. Each contract counts once even when several findings flag it, so this can never exceed total spend. |
 | Expiring ≤ 90 days | Count and value of contracts whose end date falls inside 90 days. |
 | Single-sourced categories | Categories where every contract sits with one supplier. |
-| Data confidence | Share of the six key fields (supplier, category, department, owner, annual value, end date) that are populated. Every other figure is only as good as this one. |
+| Data confidence | Share of the six key fields (supplier, category, department, owner, annual value, end date) that are *genuinely* populated. The importer substitutes "Unknown supplier", "Uncategorized" and "Unassigned" for blank columns so the rest of the app has something to group by; those stand-ins are never counted as data, so this figure cannot flatter a thin register. Every other figure is only as good as this one. |
 
 Each KPI is clickable and switches the graph to the lens that shows it.
 "Hide" collapses the strip to a one-line summary.

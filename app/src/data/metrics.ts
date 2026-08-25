@@ -1,8 +1,12 @@
 import type { Contract, EntityStats } from './types'
+import { registerCompleteness } from './completeness'
 
-const now = new Date()
-
-function daysDiff(d: Date): number {
+/**
+ * Every figure here takes the instant it is measured against. A module-level
+ * `new Date()` froze "today" at import, so a dashboard left open past midnight
+ * drifted out of agreement with the Web and Calendar, which recompute live.
+ */
+function daysDiff(d: Date, now: Date): number {
   return Math.round((d.getTime() - now.getTime()) / 86400000)
 }
 
@@ -10,6 +14,7 @@ function computeEntityStats(
   name: string,
   type: EntityStats['type'],
   contracts: Contract[],
+  now: Date,
   totalPortfolioSpend: number
 ): EntityStats {
   const totalSpend = contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0)
@@ -32,9 +37,9 @@ function computeEntityStats(
   const supplierConcentration = topSupplier?.share ?? 0
   const singleSource = suppliers.size === 1 && contracts.length > 1
 
-  const expiring90 = contracts.filter(c => c.endDate && daysDiff(c.endDate) > 0 && daysDiff(c.endDate) <= 90)
-  const expiring180 = contracts.filter(c => c.endDate && daysDiff(c.endDate) > 90 && daysDiff(c.endDate) <= 180)
-  const expired = contracts.filter(c => c.endDate && daysDiff(c.endDate) < 0)
+  const expiring90 = contracts.filter(c => c.endDate && daysDiff(c.endDate, now) > 0 && daysDiff(c.endDate, now) <= 90)
+  const expiring180 = contracts.filter(c => c.endDate && daysDiff(c.endDate, now) > 90 && daysDiff(c.endDate, now) <= 180)
+  const expired = contracts.filter(c => c.endDate && daysDiff(c.endDate, now) < 0)
   const missingOwner = contracts.filter(c => !c.owner)
   const missingValue = contracts.filter(c => c.annualValue === undefined)
 
@@ -48,8 +53,8 @@ function computeEntityStats(
   // silent renewal risk
   const silentRenewal = contracts.filter(c => {
     if (!c.autoRenew || !c.endDate || !c.noticePeriodDays) return false
-    const noticeDate = daysDiff(c.endDate) - c.noticePeriodDays
-    return noticeDate <= 30 && daysDiff(c.endDate) > 0
+    const noticeDate = daysDiff(c.endDate, now) - c.noticePeriodDays
+    return noticeDate <= 30 && daysDiff(c.endDate, now) > 0
   })
   risk += Math.min(15, silentRenewal.length * 8)
 
@@ -65,7 +70,8 @@ function computeEntityStats(
 export function computeStatsByField(
   contracts: Contract[],
   field: 'category' | 'department' | 'supplier' | 'owner',
-  type: EntityStats['type']
+  type: EntityStats['type'],
+  now = new Date()
 ): EntityStats[] {
   const totalSpend = contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0)
   const groups = new Map<string, Contract[]>()
@@ -75,34 +81,24 @@ export function computeStatsByField(
     groups.get(key)!.push(c)
   }
   return [...groups.entries()]
-    .map(([name, cs]) => computeEntityStats(name, type, cs, totalSpend))
+    .map(([name, cs]) => computeEntityStats(name, type, cs, now, totalSpend))
     .sort((a, b) => b.totalSpend - a.totalSpend)
 }
 
-export function portfolioSummary(contracts: Contract[]) {
+export function portfolioSummary(contracts: Contract[], now = new Date()) {
   const totalSpend = contracts.reduce((s, c) => s + (c.annualValue ?? 0), 0)
   const suppliers = new Set(contracts.map(c => c.supplier)).size
   const departments = new Set(contracts.map(c => c.department)).size
   const categories = new Set(contracts.map(c => c.category)).size
   const owners = new Set(contracts.filter(c => c.owner).map(c => c.owner)).size
-  const expiring90 = contracts.filter(c => c.endDate && daysDiff(c.endDate) > 0 && daysDiff(c.endDate) <= 90).length
-  const expired = contracts.filter(c => c.endDate && daysDiff(c.endDate) < 0).length
+  const expiring90 = contracts.filter(c => c.endDate && daysDiff(c.endDate, now) > 0 && daysDiff(c.endDate, now) <= 90).length
+  const expired = contracts.filter(c => c.endDate && daysDiff(c.endDate, now) < 0).length
   const missingOwner = contracts.filter(c => !c.owner).length
   const missingValue = contracts.filter(c => c.annualValue === undefined).length
   const avgValue = contracts.filter(c => c.annualValue !== undefined).length > 0
     ? totalSpend / contracts.filter(c => c.annualValue !== undefined).length
     : 0
-  const dataQuality = (() => {
-    const fields = ['supplier', 'category', 'department', 'owner', 'annualValue', 'endDate'] as const
-    let filled = 0, total = 0
-    for (const c of contracts) {
-      for (const f of fields) {
-        total++
-        if (f === 'owner' ? c.owner : f === 'annualValue' ? c.annualValue !== undefined : f === 'endDate' ? c.endDate : (c as any)[f]) filled++
-      }
-    }
-    return total > 0 ? Math.round((filled / total) * 100) : 100
-  })()
+  const dataQuality = Math.round(registerCompleteness(contracts) * 100)
   return { totalSpend, suppliers, departments, categories, owners, expiring90, expired, missingOwner, missingValue, avgValue, dataQuality, contractCount: contracts.length }
 }
 

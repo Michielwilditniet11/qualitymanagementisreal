@@ -1,5 +1,6 @@
 import type { GraphNode } from '../data/types'
 import { NODE_COLORS } from '../graph/buildGraph'
+import { contractCompleteness } from '../data/completeness'
 import { riskScore, riskLevel, entityRiskLevel, RISK_COLORS, daysDiff } from './risk'
 
 export type LensId = 'structure' | 'spend' | 'risk' | 'expiry' | 'concentration' | 'data' | 'gaps'
@@ -104,31 +105,18 @@ function mix(a: string, b: string, t: number): string {
   return '#' + out.map(v => v.toString(16).padStart(2, '0')).join('')
 }
 
-/** Fraction of the six key fields populated on a contract. */
+/**
+ * Fraction of the six key fields genuinely populated. Delegates to the shared
+ * check so a parser placeholder is never counted as data.
+ */
 export function completeness(node: GraphNode): number {
   if (node.type !== 'contract' || !node.contract) {
     if (node.contracts.length === 0) return 1
-    return node.contracts.reduce((s, c) => {
-      let f = 0
-      if (c.supplier) f++
-      if (c.category) f++
-      if (c.department) f++
-      if (c.owner) f++
-      if (c.annualValue !== undefined) f++
-      if (c.endDate) f++
-      return s + f / 6
-    }, 0) / node.contracts.length
+    return node.contracts.reduce((s, c) => s + contractCompleteness(c), 0) / node.contracts.length
   }
-  const c = node.contract
-  let filled = 0
-  if (c.supplier) filled++
-  if (c.category) filled++
-  if (c.department) filled++
-  if (c.owner) filled++
-  if (c.annualValue !== undefined) filled++
-  if (c.endDate) filled++
-  return filled / 6
+  return contractCompleteness(node.contract)
 }
+
 
 /** Departments touched by this node's contracts. */
 function deptCount(node: GraphNode): number {

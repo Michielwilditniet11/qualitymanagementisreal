@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import type { Contract } from '../data/types'
 import {
-  timelineWindow, timelineRows, monthTicks, todayPct, annotate, urgencyColor,
+  timelineWindow, timelineRows, monthTicks, todayPct, annotate,
 } from '../analytics/timeline'
 
 const NOW = new Date('2026-06-15T12:00:00Z')
@@ -195,22 +195,6 @@ describe('annotate', () => {
   })
 })
 
-describe('urgencyColor', () => {
-  // Window must be built from the contract itself, or a far-future expiry
-  // falls outside it and produces no row.
-  const rowFor = (days: number) => {
-    const cs = [contract({ endDate: inDays(days) })]
-    return timelineRows(cs, timelineWindow(cs, 'all', NOW), NOW)[0]
-  }
-
-  it('escalates as expiry approaches', () => {
-    expect(urgencyColor(rowFor(-5))).toBe('#DC2626')
-    expect(urgencyColor(rowFor(10))).toBe('#DC2626')
-    expect(urgencyColor(rowFor(60))).toBe('#D97706')
-    expect(urgencyColor(rowFor(200))).toBe('#0EA5E9')
-    expect(urgencyColor(rowFor(500))).toBe('#475569')
-  })
-})
 
 /* ─── Zoom, pan, density, partition (UX2) ─── */
 

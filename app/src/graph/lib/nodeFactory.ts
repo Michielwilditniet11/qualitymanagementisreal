@@ -296,6 +296,27 @@ export function buildNodeVisual(countText: string): NodeVisual {
 export const BADGE_SIZE = 0.028
 
 /**
+ * Release a node visual's GPU resources.
+ *
+ * Dropping the JS handle is not enough: geometries, materials and the
+ * per-node count texture live in GPU memory until disposed, so filtering the
+ * graph repeatedly (dragging the spend slider) grew allocation monotonically
+ * until the WebGL context was lost. Label textures belong to the shared
+ * TextureCache and are deliberately left alone.
+ */
+export function disposeNodeVisual(v: NodeVisual) {
+  v.countMat.map?.dispose()
+  v.countMat.dispose()
+  v.labelMat.dispose()          // its map is cache-owned
+  v.badgeMat.dispose()          // its map is glyph-cache-owned
+  v.ring.geometry.dispose()
+  v.ringMat.dispose()
+  v.glow.geometry.dispose()
+  v.glowMat.dispose()
+  v.group.clear()
+}
+
+/**
  * Show or hide a node's type glyph. Called every paint, so it must be free
  * when nothing changed — hence the `applied` guard.
  */

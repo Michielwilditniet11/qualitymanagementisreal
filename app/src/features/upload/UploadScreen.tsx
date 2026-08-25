@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react'
-import { parseFile, parseCSVText, guessMapping, buildDataset, TARGET_FIELDS, FIELD_LABELS } from '../../data/parser'
+import { useState, useCallback, useMemo } from 'react'
+import { parseFile, parseCSVText, guessMapping, buildDataset, rowsToContracts, TARGET_FIELDS, FIELD_LABELS } from '../../data/parser'
 import { SAMPLE_CSV } from '../../data/sample'
 import { T } from '../../ui'
 import { useDataStore } from '../../store/dataStore'
@@ -50,6 +50,24 @@ export default function UploadScreen() {
     setDataset(ds)
     setView('web')
   }, [headers, rows, mapping, fileName, setDataset, setView])
+
+  /**
+   * What the parser will complain about under the current mapping. It has
+   * always produced these; nothing ever read them, so an import with
+   * unparseable dates or duplicate ids looked identical to a clean one.
+   */
+  const issuePreview = useMemo(() => {
+    if (rows.length === 0) return []
+    const { issues } = rowsToContracts(rows, mapping)
+    const byField = new Map<string, { field: string; kind: string; count: number; example: string }>()
+    for (const i of issues) {
+      const k = `${i.field}|${i.kind}`
+      const hit = byField.get(k)
+      if (hit) hit.count++
+      else byField.set(k, { field: i.field, kind: i.kind, count: 1, example: i.detail })
+    }
+    return [...byField.values()].sort((a, b) => b.count - a.count)
+  }, [rows, mapping])
 
   const updateMapping = (field: string, colIdx: number) => {
     setMapping(m => {
@@ -136,6 +154,33 @@ export default function UploadScreen() {
               </tbody>
             </table>
           </div>
+
+          {issuePreview.length > 0 && (
+            <div className="mb-4 rounded-sm" style={{ background: T.panel, border: `1px solid ${T.hairline}` }}>
+              <div className="px-3 py-2 text-[9px] tracking-[0.18em]"
+                style={{ color: T.amber, fontFamily: T.mono, borderBottom: `1px solid ${T.hairline}` }}>
+                WHAT THIS IMPORT IS MISSING
+              </div>
+              <div className="p-3 space-y-1">
+                {issuePreview.map(i => (
+                  <div key={`${i.field}|${i.kind}`} className="flex items-baseline gap-2 text-[10px]">
+                    <span className="tabular-nums font-semibold flex-shrink-0"
+                      style={{ color: i.kind === 'missing' ? T.amber : T.red, fontFamily: T.mono, minWidth: '34px' }}>
+                      {i.count}
+                    </span>
+                    <span style={{ color: T.dim }}>
+                      {FIELD_LABELS[i.field] ?? i.field} — {i.kind}
+                    </span>
+                    <span className="truncate italic" style={{ color: T.faint }}>{i.example}</span>
+                  </div>
+                ))}
+                <div className="text-[9px] pt-1.5 italic" style={{ color: T.muted }}>
+                  You can still import. Every total will understate reality by whatever is
+                  missing here, and the Data lens will show you where.
+                </div>
+              </div>
+            </div>
+          )}
 
           <button onClick={handleImport} className="font-semibold px-5 py-2.5 rounded-sm text-[11px] tracking-wider hover:brightness-110 transition"
             style={{ background: T.cyan, color: T.ground, fontFamily: T.mono }}>

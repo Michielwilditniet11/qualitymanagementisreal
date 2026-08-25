@@ -183,13 +183,6 @@ export function annotate(row: TimelineRow): string {
   return row.noticeDays ? `${base} (${row.noticeDays}d notice)` : base
 }
 
-/** Urgency colour, matching the Expiry lens in the web view. */
-export function urgencyColor(row: TimelineRow): string {
-  if (row.overdue || row.daysUntil < 30) return '#DC2626'
-  if (row.daysUntil < 90) return '#D97706'
-  if (row.daysUntil < 365) return '#0EA5E9'
-  return '#475569'
-}
 
 /* ─── Zoom, pan and density (UX2) ─── */
 

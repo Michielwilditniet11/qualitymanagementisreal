@@ -42,6 +42,9 @@ const COACH = [
   },
 ] as const
 
+/** Remembers that the first-run walkthrough has been completed. */
+const COACH_SEEN_KEY = 'procurementweb.coachSeen'
+
 const SHORTCUTS: [string, string][] = [
   ['1–7', 'switch lens'],
   ['F', 'fit everything'],
@@ -77,7 +80,24 @@ export default function WebScreen() {
   const [storyIdx, setStoryIdx] = useState(0)
   const handleRef = useRef<WebHandle | null>(null)
   const [briefingOpen, setBriefingOpen] = useState(true)
-  const [coachStep, setCoachStep] = useState(0)
+  const [coachStep, setCoachStep] = useState(() => {
+    // WebScreen unmounts on every tab switch, so plain state replayed the
+    // whole first-run sequence each time the user came back to the Web.
+    try { return localStorage.getItem(COACH_SEEN_KEY) ? COACH.length : 0 } catch { return 0 }
+  })
+  const advanceCoach = useCallback(() => {
+    setCoachStep(i => {
+      const next = i + 1
+      if (next >= COACH.length) {
+        try { localStorage.setItem(COACH_SEEN_KEY, '1') } catch { /* private mode */ }
+      }
+      return next
+    })
+  }, [])
+  const replayCoach = useCallback(() => {
+    try { localStorage.removeItem(COACH_SEEN_KEY) } catch { /* private mode */ }
+    setCoachStep(0)
+  }, [])
   const [showKeys, setShowKeys] = useState(false)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
@@ -132,6 +152,13 @@ export default function WebScreen() {
 
   const hiddenKeys = useMemo(() => {
     const hidden = new Set<string>()
+    // Indexed once. The linear scan this replaces sat inside a .some() inside
+    // a loop over every node, so a 5k-contract register cost ~100M steps on
+    // each filter change — seconds of frozen main thread.
+    const contractNodeById = new Map<string, GraphNode>()
+    for (const n of nodes) {
+      if (n.type === 'contract' && n.contract) contractNodeById.set(n.contract.id, n)
+    }
     const deptActive = deptFilter.size > 0
     const passDept = (d?: string) => !deptActive || (d ? deptFilter.has(d) : false)
     const passRisk = (n: GraphNode) => {
@@ -149,7 +176,7 @@ export default function WebScreen() {
         const alive = n.contracts.some(c =>
           passDept(c.department) &&
           (riskFilter === 'all' || (() => {
-            const cn = nodes.find(x => x.type === 'contract' && x.contract?.id === c.id)
+            const cn = contractNodeById.get(c.id)
             return cn ? passRisk(cn) : true
           })()))
         if (!alive) hidden.add(n.key)
@@ -224,7 +251,8 @@ export default function WebScreen() {
         else if (e.key === 'Escape') exitStory()
         return
       }
-      // Esc peels one layer at a time; the frame is the outermost.
+      // Esc peels one layer at a time: sheet, then frame, then selection.
+      if (e.key === 'Escape' && showKeys) { setShowKeys(false); return }
       if (e.key === 'Escape' && frame) { clearFrame(); return }
       const li = parseInt(e.key)
       if (li >= 1 && li <= LENSES.length) setLens(LENSES[li - 1].id)
@@ -234,7 +262,7 @@ export default function WebScreen() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [story, exitStory, goBack, frame, clearFrame])
+  }, [story, exitStory, goBack, frame, clearFrame, showKeys])
 
   /* ─── Ticker figures ─── */
   const kpis = useMemo(() => {
@@ -531,7 +559,7 @@ export default function WebScreen() {
         {/* ─── First-run coach marks ─── */}
         {!story && coachStep < COACH.length && (
           <div className="absolute inset-0 z-30" style={{ background: 'rgba(4,7,14,0.55)' }}
-            onClick={() => setCoachStep(i => i + 1)}>
+            onClick={advanceCoach}>
             <div className="absolute rounded-sm p-3 max-w-xs"
               style={{
                 ...COACH[coachStep].pos,
@@ -544,7 +572,7 @@ export default function WebScreen() {
               <div className="text-[12px] font-semibold text-white mb-1">{COACH[coachStep].title}</div>
               <div className="text-[11px] leading-relaxed" style={{ color: T.dim }}>{COACH[coachStep].body}</div>
               <div className="text-[9px] mt-2 tracking-wider" style={{ color: T.muted, fontFamily: T.mono }}>
-                CLICK TO CONTINUE · ? REOPENS
+                CLICK TO CONTINUE
               </div>
             </div>
           </div>
@@ -566,8 +594,16 @@ export default function WebScreen() {
                   </div>
                 ))}
               </div>
-              <div className="text-[9px] mt-3 tracking-wider" style={{ color: T.muted, fontFamily: T.mono }}>
-                ESC OR CLICK TO CLOSE
+              <div className="flex items-center justify-between mt-3 gap-6">
+                <span className="text-[9px] tracking-wider" style={{ color: T.muted, fontFamily: T.mono }}>
+                  ESC OR CLICK TO CLOSE
+                </span>
+                <button
+                  onClick={e => { e.stopPropagation(); setShowKeys(false); replayCoach() }}
+                  className="text-[9px] tracking-wider px-1.5 py-0.5 cursor-pointer hover:brightness-150"
+                  style={{ color: T.cyan, border: `1px solid ${T.hairlineBright}`, fontFamily: T.mono }}>
+                  REPLAY WALKTHROUGH
+                </button>
               </div>
             </div>
           </div>

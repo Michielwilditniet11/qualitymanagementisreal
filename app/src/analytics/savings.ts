@@ -149,7 +149,13 @@ export function savingsSummary(opps: Opportunity[], contracts: Contract[]): Savi
     const highRate = o.high / base
     for (const id of o.contractIds) {
       const cur = bestRate.get(id)
-      if (!cur || highRate > cur.high) bestRate.set(id, { low: lowRate, high: highRate })
+      // Take the best low and the best high independently. Carrying the
+      // winning opportunity's floor along with its ceiling could push the
+      // headline low *below* what a single opportunity already guarantees —
+      // a range that contradicts its own components.
+      bestRate.set(id, cur
+        ? { low: Math.max(cur.low, lowRate), high: Math.max(cur.high, highRate) }
+        : { low: lowRate, high: highRate })
     }
   }
 

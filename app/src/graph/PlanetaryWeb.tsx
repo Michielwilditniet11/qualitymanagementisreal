@@ -17,7 +17,7 @@ import {
 } from './lib/cameraDirector'
 import {
   TextureCache, buildNodeVisual, applyLabel, applyRadius, applyBadge,
-  type NodeVisual,
+  disposeNodeVisual, type NodeVisual,
 } from './lib/nodeFactory'
 import { projectMinimap, nearestKey, type MinimapProjection } from './lib/minimap'
 import { Crosshair, Maximize2, RefreshCw, Focus } from 'lucide-react'
@@ -492,6 +492,7 @@ export default function PlanetaryWeb(props: Props) {
 
     return () => {
       textureCacheRef.current.dispose()
+      for (const v of visualsRef.current.values()) disposeNodeVisual(v)
       visualsRef.current.clear()
       graph._destructor()
     }
@@ -500,10 +501,13 @@ export default function PlanetaryWeb(props: Props) {
   /* ─── Data ─── */
   useEffect(() => {
     if (!graphRef.current) return
-    // Drop visuals for nodes that no longer exist so the cache cannot grow forever.
+    // Drop visuals for nodes that no longer exist, releasing their GPU
+    // resources — deleting the map entry alone leaks geometry and textures.
     const live = new Set(fgNodes.map(n => n.id))
-    for (const key of [...visualsRef.current.keys()]) {
-      if (!live.has(key)) visualsRef.current.delete(key)
+    for (const [key, v] of [...visualsRef.current]) {
+      if (live.has(key)) continue
+      disposeNodeVisual(v)
+      visualsRef.current.delete(key)
     }
     settledRef.current = false
     graphRef.current.graphData({ nodes: fgNodes, links: fgLinks })
@@ -541,6 +545,16 @@ export default function PlanetaryWeb(props: Props) {
     for (const p of phantomsRef.current) {
       scene.remove(p.obj)
       scene.remove(p.line)
+      // Phantoms are rebuilt on every lens change, so their sprite textures
+      // and geometry have to go back with them.
+      p.obj.traverse((o: THREE.Object3D) => {
+        const m = o as THREE.Mesh & THREE.Sprite
+        m.geometry?.dispose?.()
+        const mat = m.material as THREE.Material & { map?: THREE.Texture }
+        if (mat) { mat.map?.dispose(); mat.dispose() }
+      })
+      p.line.geometry.dispose()
+      ;(p.line.material as THREE.Material).dispose()
     }
     phantomsRef.current = []
     if (lens !== 'gaps' || !gaps) return

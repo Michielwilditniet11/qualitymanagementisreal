@@ -1,6 +1,7 @@
 import Papa from 'papaparse'
 import * as XLSX from 'xlsx'
 import type { Contract, ColumnMapping, DataIssue, Dataset } from './types'
+import { PLACEHOLDERS } from './completeness'
 
 const HEADER_ALIASES: Record<string, string[]> = {
   contract_id: ['contract_id', 'contractid', 'id', 'contract no', 'contract number', 'contractnr', 'vertragsnummer'],
@@ -105,9 +106,9 @@ export function rowsToContracts(dataRows: string[][], mapping: ColumnMapping): {
     seenIds.add(id)
 
     const name = get(row, mapping, 'contract_name') || `Contract ${i + 1}`
-    const supplier = get(row, mapping, 'supplier') || 'Unknown supplier'
-    const category = get(row, mapping, 'category') || 'Uncategorized'
-    const department = get(row, mapping, 'department') || 'Unassigned'
+    const supplier = get(row, mapping, 'supplier') || PLACEHOLDERS.supplier
+    const category = get(row, mapping, 'category') || PLACEHOLDERS.category
+    const department = get(row, mapping, 'department') || PLACEHOLDERS.department
     const owner = get(row, mapping, 'contract_owner')
     const currency = get(row, mapping, 'currency')
     const status = get(row, mapping, 'status')

@@ -23,14 +23,32 @@ const ROW_H = 30
 
 /* ─── ICS ─── */
 
-function icsEvents(rows: TimelineRow[]): string {
+/**
+ * RFC 5545 TEXT escaping. A contract named "Cleaning, HQ; phase 2" would
+ * otherwise be truncated or rejected, because comma and semicolon are value
+ * separators in the format.
+ */
+export function icsText(v: unknown): string {
+  return String(v ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,')
+    .replace(/\r?\n/g, '\\n')
+}
+
+const icsDate = (d: Date) =>
+  `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+
+export function icsEvents(rows: TimelineRow[]): string {
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ProcurementWeb//Renewal Calendar//EN']
   const event = (d: Date, summary: string, c: Contract, uid: string) => {
-    const ds = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-    lines.push('BEGIN:VEVENT', `DTSTART;VALUE=DATE:${ds}`, `DTEND;VALUE=DATE:${ds}`,
-      `SUMMARY:${summary}: ${c.name}`,
-      `DESCRIPTION:Supplier: ${c.supplier}\\nDepartment: ${c.department}\\nValue: ${fmtMoney(c.annualValue)}\\nEnd date: ${fmtDate(c.endDate)}`,
-      `UID:${uid}@procurementweb`, 'END:VEVENT')
+    // For DATE values DTEND is exclusive, so DTSTART == DTEND is a
+    // zero-length event that Google Calendar and Outlook discard.
+    const end = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1)
+    lines.push('BEGIN:VEVENT', `DTSTART;VALUE=DATE:${icsDate(d)}`, `DTEND;VALUE=DATE:${icsDate(end)}`,
+      `SUMMARY:${icsText(`${summary}: ${c.name}`)}`,
+      `DESCRIPTION:${icsText(`Supplier: ${c.supplier}`)}\\n${icsText(`Department: ${c.department}`)}\\n${icsText(`Value: ${fmtMoney(c.annualValue)}`)}\\n${icsText(`End date: ${fmtDate(c.endDate)}`)}`,
+      `UID:${icsText(uid)}@procurementweb`, 'END:VEVENT')
   }
   for (const r of rows) {
     if (r.noticeDate) event(r.noticeDate, '⚠ Notice deadline', r.contract, `${r.contract.id}-notice`)
@@ -144,12 +162,22 @@ export default function CalendarScreen() {
   const zoom = useCallback((factor: number, focusPct = 0.5) => {
     setWindow(w => zoomWindow(w, factor, focusPct))
   }, [])
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    if (!trackRef.current) return
-    e.preventDefault()
-    const rect = trackRef.current.getBoundingClientRect()
-    const focus = (e.clientX - rect.left) / rect.width
-    zoom(e.deltaY > 0 ? 1.25 : 0.8, focus)
+  /**
+   * Registered manually rather than via onWheel, because React attaches
+   * `wheel` to its root container as a *passive* listener — inside which
+   * preventDefault() silently does nothing, so the page scrolled while the
+   * timeline zoomed and the browser logged a warning on every tick.
+   */
+  useEffect(() => {
+    const el = trackRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      zoom(e.deltaY > 0 ? 1.25 : 0.8, (e.clientX - rect.left) / rect.width)
+    }
+    el.addEventListener('wheel', handler, { passive: false })
+    return () => el.removeEventListener('wheel', handler)
   }, [zoom])
 
   const dragRef = useRef<{ x: number; active: boolean }>({ x: 0, active: false })
@@ -362,7 +390,7 @@ export default function CalendarScreen() {
             )}
 
             {/* ─── Rows ─── */}
-            <div ref={trackRef} onWheel={onWheel}
+            <div ref={trackRef}
               onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
               {groups.map(g => (
                 <div key={g.name || 'all'}>
