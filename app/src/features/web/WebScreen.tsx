@@ -12,23 +12,11 @@ import { computeCentrality, assessImpact } from '../../analytics/centrality'
 import { findGaps, gapExposure, type Gap } from '../../analytics/gaps'
 import { buildStory, type StoryStep } from '../../analytics/story'
 import { negotiationCalendar } from '../../analytics/levers'
+import { T, Tick, TerminalSelect } from '../../ui'
 
-/* ─── Terminal theme ───
-   Bloomberg discipline (black ground, hairlines, amber attention, semantic
-   red/green) crossed with the app's cyan-AI accent. Numbers set in mono. */
-export const T = {
-  ground: '#04070E',
-  panel: '#080D18',
-  hairline: '#16233A',
-  mono: "ui-monospace, 'SF Mono', 'Cascadia Mono', 'JetBrains Mono', Menlo, monospace",
-  amber: '#FFB020',
-  cyan: '#2FD3E6',
-  green: '#22C55E',
-  red: '#FF4D4D',
-  text: '#E6EDF6',
-  muted: '#5B6B84',
-  faint: '#3A465C',
-}
+/* Terminal tokens live in src/ui/theme; re-exported so existing imports of
+   `T` from this module keep working. */
+export { T }
 
 type RiskFilter = 'all' | 'high' | 'medium+'
 
@@ -497,43 +485,6 @@ export default function WebScreen() {
 
 /* ─── Terminal primitives ─── */
 
-function Tick({ label, value, sub, color, onClick }: {
-  label: string; value: string; sub?: string; color: string; onClick?: () => void
-}) {
-  return (
-    <button onClick={onClick}
-      className="px-3.5 py-1.5 text-left cursor-pointer flex-shrink-0 transition-colors hover:bg-[#0B1322]"
-      style={{ borderRight: `1px solid ${T.hairline}` }}>
-      <span className="text-[8px] tracking-[0.18em] block" style={{ color: T.muted }}>{label}</span>
-      <span className="text-[13px] font-bold tabular-nums leading-tight" style={{ color }}>
-        {value}
-        {sub && <span className="text-[9px] font-normal ml-1" style={{ color: T.muted }}>{sub}</span>}
-      </span>
-    </button>
-  )
-}
-
-/** A native select disguised as a terminal control. */
-function TerminalSelect({ label, value, options, onChange }: {
-  label: string; value: string
-  options: { value: string; label: string }[]
-  onChange: (v: string) => void
-}) {
-  return (
-    <div className="relative flex-shrink-0">
-      <select value={value} onChange={e => onChange(e.target.value)}
-        className="absolute inset-0 opacity-0 cursor-pointer w-full"
-        aria-label={label}>
-        <option value="" disabled hidden>{label}</option>
-        {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <div className="px-2 py-0.5 text-[10px] tracking-wider pointer-events-none"
-        style={{ fontFamily: T.mono, color: T.muted, border: `1px solid ${T.hairline}`, background: T.ground }}>
-        {label} ▾
-      </div>
-    </div>
-  )
-}
 
 function GapsPanel({ gaps, contracts, onFrame }: {
   gaps: Gap[]; contracts: any[]

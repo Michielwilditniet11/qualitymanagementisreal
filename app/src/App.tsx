@@ -6,20 +6,22 @@ import DiagnosticsScreen from './features/diagnostics/DiagnosticsScreen'
 import CalendarScreen from './features/calendar/CalendarScreen'
 import KraljicScreen from './features/kraljic/KraljicScreen'
 import ReportsScreen from './features/reports/ReportsScreen'
+import { T } from './ui'
 
 const TABS = [
-  { key: 'upload', label: 'Upload', needsData: false },
-  { key: 'web', label: 'Spider Web', needsData: true },
-  { key: 'diagnostics', label: 'Diagnostics', needsData: true },
-  { key: 'calendar', label: 'Calendar', needsData: true },
-  { key: 'kraljic', label: 'Kraljic', needsData: true },
-  { key: 'reports', label: 'Reports', needsData: true },
+  { key: 'upload', label: 'UPLOAD', needsData: false },
+  { key: 'web', label: 'WEB', needsData: true },
+  { key: 'diagnostics', label: 'DIAGNOSTICS', needsData: true },
+  { key: 'calendar', label: 'CALENDAR', needsData: true },
+  { key: 'kraljic', label: 'KRALJIC', needsData: true },
+  { key: 'reports', label: 'REPORTS', needsData: true },
 ] as const
 
 export default function App() {
   const view = useUIStore(s => s.view)
   const setView = useUIStore(s => s.setView)
-  const hasData = useDataStore(s => s.dataset !== null)
+  const dataset = useDataStore(s => s.dataset)
+  const hasData = dataset !== null
 
   const screens: Record<string, React.ReactNode> = {
     upload: <UploadScreen />,
@@ -31,29 +33,54 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-[#0f1420] text-[#e8edf7]">
-      <header className="flex items-center gap-4 px-5 py-2.5 bg-[#171e2e] border-b border-[#2a3650]">
-        <h1 className="text-base font-bold tracking-wide">
-          Procurement<span className="text-[#4da3ff]">Web</span>
-        </h1>
-        <div className="flex-1" />
-        <nav className="flex gap-1">
+    <div className="h-screen flex flex-col" style={{ background: T.ground, color: T.text }}>
+      <header className="flex items-stretch flex-shrink-0"
+        style={{ background: T.ground, borderBottom: `1px solid ${T.hairline}` }}>
+        <div className="flex items-center px-4" style={{ borderRight: `1px solid ${T.hairline}` }}>
+          <span className="text-[13px] font-bold tracking-tight">
+            PROCUREMENT<span style={{ color: T.cyan }}>WEB</span>
+          </span>
+        </div>
+
+        <nav className="flex items-stretch">
           {TABS.map(tab => {
             const disabled = tab.needsData && !hasData
+            const active = view === tab.key
             return (
               <button
                 key={tab.key}
                 onClick={() => !disabled && setView(tab.key)}
                 disabled={disabled}
-                className={`px-3 py-1.5 rounded-lg text-[13px] transition
-                  ${view === tab.key ? 'bg-[#1d2639] text-white border border-[#2a3650]' : 'text-[#8fa0bd] border border-transparent hover:text-white'}
-                  ${disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-pointer'}`}
+                aria-current={active ? 'page' : undefined}
+                className="px-3.5 text-[10px] tracking-[0.14em] transition-colors"
+                style={{
+                  fontFamily: T.mono,
+                  color: disabled ? T.faint : active ? T.cyan : T.muted,
+                  cursor: disabled ? 'not-allowed' : 'pointer',
+                  borderBottom: `2px solid ${active ? T.cyan : 'transparent'}`,
+                  background: active ? T.panel : 'transparent',
+                }}
               >
                 {tab.label}
               </button>
             )
           })}
         </nav>
+
+        <div className="flex-1" />
+
+        {/* Dataset badge — what is loaded, at a glance. */}
+        {dataset && (
+          <div className="flex items-center gap-2 px-4 text-[9px] tracking-wider"
+            style={{ fontFamily: T.mono, color: T.muted, borderLeft: `1px solid ${T.hairline}` }}>
+            <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: T.green }} />
+            <span style={{ color: T.dim }}>{dataset.sourceName}</span>
+            <span>·</span>
+            <span className="tabular-nums">{dataset.contracts.length} CONTRACTS</span>
+            <span>·</span>
+            <span className="tabular-nums">{dataset.importedAt.toISOString().slice(0, 10)}</span>
+          </div>
+        )}
       </header>
       <main className="flex-1 flex min-h-0">
         {screens[view]}
