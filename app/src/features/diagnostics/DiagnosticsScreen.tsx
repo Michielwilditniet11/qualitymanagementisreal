@@ -1,80 +1,48 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect, useCallback } from 'react'
 import { useDataStore } from '../../store/dataStore'
 import { useUIStore } from '../../store/uiStore'
 import { computeStatsByField, portfolioSummary, spendConcentrationCurve } from '../../data/metrics'
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area,
+  BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip, ResponsiveContainer, AreaChart, Area,
   ScatterChart, Scatter, ZAxis, Cell,
 } from 'recharts'
 import type { EntityStats, Contract } from '../../data/types'
-import { fmtK, riskScore } from '../../analytics/risk'
+import { riskScore } from '../../analytics/risk'
 import { auditTerms, hasPaymentTermsData, parsePaymentDays, type TermFinding, type ClauseKind } from '../../analytics/terms'
-import { supplierLeverage, negotiationCalendar, type SupplierLeverage } from '../../analytics/levers'
+import { supplierLeverage, negotiationCalendar, type SupplierLeverage, type ActionItem } from '../../analytics/levers'
 import { savingsOpportunities, savingsSummary } from '../../analytics/savings'
-import { ChevronDown, ChevronRight, ExternalLink } from 'lucide-react'
+import {
+  T, Panel, SectionLabel, Tick, Chip, DataTable, EntityLink, EmptyState, MiniBar,
+  fmtK, fmtMoney, fmtDate, urgencyColor,
+  SEVERITY_COLORS, POSITION_COLORS, type Column,
+} from '../../ui'
+import { ChevronDown, ChevronRight, Activity } from 'lucide-react'
 
-function fmtMoney(v: number) { return '€' + Math.round(v).toLocaleString('en-US') }
-function fmtDate(d: Date) { return d.toISOString().slice(0, 10) }
-function scoreClass(s: number) { return s >= 80 ? 'bg-green-900/30 text-green-400' : s >= 55 ? 'bg-amber-900/30 text-amber-400' : 'bg-red-900/30 text-red-400' }
-
-const SEVERITY_COLORS: Record<string, string> = { critical: '#DC2626', warning: '#D97706', info: '#0EA5E9' }
-const POSITION_COLORS: Record<string, string> = { strong: '#059669', balanced: '#D97706', weak: '#DC2626' }
 const KIND_COLORS: Record<string, string> = {
-  'tail-consolidation': '#38BDF8',
-  'category-bundling': '#A78BFA',
-  'payment-harmonisation': '#34D399',
-  'renewal-interception': '#FBBF24',
+  'tail-consolidation': T.cyan,
+  'category-bundling': T.violet,
+  'payment-harmonisation': T.green,
+  'renewal-interception': T.amber,
 }
 
-/** Urgency of an act-by date. */
-function urgency(daysLeft: number, missed: boolean): string {
-  if (missed) return '#DC2626'
-  if (daysLeft <= 30) return '#DC2626'
-  if (daysLeft <= 90) return '#D97706'
-  return '#0EA5E9'
-}
-
-/* ─── Shared shells ─── */
-
-function Section({ title, subtitle, children, right }: {
-  title: string; subtitle?: string; children: React.ReactNode; right?: React.ReactNode
-}) {
-  return (
-    <section className="mb-8">
-      <div className="flex items-end justify-between gap-3 mb-3 flex-wrap">
-        <div>
-          <h2 className="text-base font-semibold">{title}</h2>
-          {subtitle && <p className="text-xs mt-0.5" style={{ color: '#64748B' }}>{subtitle}</p>}
-        </div>
-        {right}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`bg-[#171e2e] border border-[#2a3650] rounded-xl p-4 ${className}`}>
-      {children}
-    </div>
-  )
-}
-
-function StatTile({ value, label }: { value: string | number; label: string }) {
-  return (
-    <div className="bg-[#171e2e] border border-[#2a3650] rounded-xl p-4">
-      <div className="text-xl font-bold tabular-nums">{value}</div>
-      <div className="text-xs text-[#8fa0bd] mt-1">{label}</div>
-    </div>
-  )
-}
+const SECTIONS = [
+  { id: 'overview', label: 'OVERVIEW' },
+  { id: 'act', label: 'ACT' },
+  { id: 'savings', label: 'SAVINGS' },
+  { id: 'suppliers', label: 'SUPPLIERS' },
+  { id: 'audit', label: 'AUDIT' },
+  { id: 'cuts', label: 'CUTS' },
+  { id: 'classic', label: 'CLASSIC' },
+] as const
 
 /* ─── Screen ─── */
 
 export default function DiagnosticsScreen() {
   const contracts = useDataStore(s => s.getContracts())
-  const inspectInWeb = useUIStore(s => s.inspectInWeb)
+  const focusInCalendar = useUIStore(s => s.focusInCalendar)
+  const [active, setActive] = useState<string>('overview')
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const sectionRefs = useRef<Record<string, HTMLElement | null>>({})
 
   const summary = useMemo(() => portfolioSummary(contracts), [contracts])
   const byCategory = useMemo(() => computeStatsByField(contracts, 'category', 'category'), [contracts])
@@ -92,369 +60,605 @@ export default function DiagnosticsScreen() {
   const openWindows = calendar.filter(i => i.kind === 'notice-deadline' && !i.missed).length
   const nextAction = calendar.find(i => !i.missed)
 
+  const counts: Record<string, number | undefined> = {
+    act: calendar.length, savings: opportunities.length,
+    suppliers: leverage.length, audit: findings.length,
+  }
+
+  const jump = useCallback((id: string) => {
+    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setActive(id)
+  }, [])
+
+  /* Scroll-spy: whichever section owns the top of the viewport is active. */
+  useEffect(() => {
+    const root = scrollRef.current
+    if (!root) return
+    const onScroll = () => {
+      let current = SECTIONS[0].id as string
+      for (const s of SECTIONS) {
+        const el = sectionRefs.current[s.id]
+        if (el && el.getBoundingClientRect().top - root.getBoundingClientRect().top <= 80) current = s.id
+      }
+      setActive(current)
+    }
+    root.addEventListener('scroll', onScroll, { passive: true })
+    return () => root.removeEventListener('scroll', onScroll)
+  }, [contracts])
+
   if (contracts.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center">
-        <p className="text-sm" style={{ color: '#64748B' }}>Import contracts to run diagnostics.</p>
+      <div className="flex-1 flex items-center justify-center" style={{ background: T.ground }}>
+        <EmptyState icon={<Activity size={22} />} title="No contracts loaded"
+          hint="Import a register on the Upload tab to run diagnostics." />
       </div>
     )
   }
 
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden p-6">
-      {/* ─── Action strip ─── */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-8">
-        <Card>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>Addressable savings</div>
-          <div className="text-xl font-bold tabular-nums" style={{ color: '#34D399' }}>
-            {fmtK(savings.low)}–{fmtK(savings.high)}
-          </div>
-          <div className="text-[9px] mt-0.5" style={{ color: '#64748B' }}>estimated range, see assumptions</div>
-        </Card>
-        <Card>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>Open negotiation windows</div>
-          <div className="text-xl font-bold tabular-nums" style={{ color: '#38BDF8' }}>{openWindows}</div>
-          <div className="text-[9px] mt-0.5" style={{ color: '#64748B' }}>notice deadlines still in reach</div>
-        </Card>
-        <Card>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>Critical term findings</div>
-          <div className="text-xl font-bold tabular-nums" style={{ color: criticalCount ? '#DC2626' : '#059669' }}>
-            {criticalCount}
-          </div>
-          <div className="text-[9px] mt-0.5" style={{ color: '#64748B' }}>clauses working against us</div>
-        </Card>
-        <Card>
-          <div className="text-[9px] uppercase tracking-wider" style={{ color: '#475569' }}>Next act-by date</div>
-          <div className="text-xl font-bold tabular-nums" style={{ color: nextAction ? urgency(nextAction.daysLeft, false) : '#64748B' }}>
-            {nextAction ? `${nextAction.daysLeft}d` : '—'}
-          </div>
-          <div className="text-[9px] mt-0.5 truncate" style={{ color: '#64748B' }}>
-            {nextAction ? nextAction.contract : 'nothing in the next year'}
-          </div>
-        </Card>
-      </div>
-
-      {/* ─── Negotiation calendar ─── */}
-      <Section title="What to act on"
-        subtitle="Every decision date in the next 12 months, soonest first. Notice deadlines are listed separately because that is when the decision actually has to be made.">
-        {calendar.length === 0 ? (
-          <Card><p className="text-xs" style={{ color: '#64748B' }}>No decision dates fall in the next 12 months.</p></Card>
-        ) : (
-          <Card className="!p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr style={{ background: '#0F172A' }}>
-                    {['Act by', 'Left', 'Contract', 'Supplier', 'Value', 'Action'].map(h => (
-                      <th key={h} className="text-left px-3 py-2 text-[9px] uppercase tracking-wider font-semibold"
-                        style={{ color: '#475569' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {calendar.slice(0, 40).map((i, n) => {
-                    const c = urgency(i.daysLeft, i.missed)
-                    return (
-                      <tr key={`${i.contractId}-${i.kind}-${n}`} style={{ borderTop: '1px solid #0F172A' }}>
-                        <td className="px-3 py-1.5 tabular-nums whitespace-nowrap" style={{ color: '#CBD5E1' }}>{fmtDate(i.actBy)}</td>
-                        <td className="px-3 py-1.5 tabular-nums whitespace-nowrap font-semibold" style={{ color: c }}>
-                          {i.missed ? 'missed' : `${i.daysLeft}d`}
-                        </td>
-                        <td className="px-3 py-1.5 text-white max-w-[220px] truncate">{i.contract}</td>
-                        <td className="px-3 py-1.5">
-                          <button onClick={() => inspectInWeb({ type: 'supplier', name: i.supplier })}
-                            className="cursor-pointer hover:underline inline-flex items-center gap-1"
-                            style={{ color: '#38BDF8' }}>
-                            {i.supplier}<ExternalLink size={9} />
-                          </button>
-                        </td>
-                        <td className="px-3 py-1.5 tabular-nums whitespace-nowrap" style={{ color: '#CBD5E1' }}>{fmtK(i.value)}</td>
-                        <td className="px-3 py-1.5" style={{ color: '#94A3B8' }}>{i.action}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-            {calendar.length > 40 && (
-              <div className="px-3 py-1.5 text-[10px]" style={{ color: '#475569', borderTop: '1px solid #0F172A' }}>
-                Showing the 40 soonest of {calendar.length} decision dates.
-              </div>
+    <div className="flex-1 flex min-h-0" style={{ background: T.ground }}>
+      {/* ─── Sub-nav rail ─── */}
+      <nav className="flex-shrink-0 hidden xl:flex flex-col py-3 gap-0.5"
+        style={{ width: '132px', borderRight: `1px solid ${T.hairline}` }}>
+        {SECTIONS.map(s => (
+          <button key={s.id} onClick={() => jump(s.id)}
+            className="px-3 py-1 text-left text-[10px] tracking-[0.14em] cursor-pointer transition-colors flex items-baseline justify-between gap-1"
+            style={{
+              fontFamily: T.mono,
+              color: active === s.id ? T.cyan : T.muted,
+              borderLeft: `2px solid ${active === s.id ? T.cyan : 'transparent'}`,
+              background: active === s.id ? T.panel : 'transparent',
+            }}>
+            {s.label}
+            {counts[s.id] !== undefined && (
+              <span className="tabular-nums" style={{ fontSize: '9px', opacity: 0.7 }}>{counts[s.id]}</span>
             )}
-          </Card>
-        )}
-      </Section>
+          </button>
+        ))}
+      </nav>
 
-      {/* ─── Savings ─── */}
-      <Section title="Where the money could come from"
-        subtitle="Heuristic ranges, not quotes. Each bar carries the assumption it was built on.">
-        {opportunities.length === 0 ? (
-          <Card><p className="text-xs" style={{ color: '#64748B' }}>No consolidation or renegotiation opportunities detected.</p></Card>
-        ) : (
-          <Card>
-            <div className="space-y-2.5">
-              {opportunities.map(o => {
-                const pct = savings.high > 0 ? (o.high / savings.high) * 100 : 0
-                return (
-                  <div key={o.kind + o.title}>
-                    <div className="flex items-baseline justify-between gap-3 mb-1">
-                      <span className="text-xs text-white">{o.title}</span>
-                      <span className="text-xs tabular-nums whitespace-nowrap font-semibold"
-                        style={{ color: KIND_COLORS[o.kind] }}>
-                        {fmtK(o.low)}–{fmtK(o.high)}
-                      </span>
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden min-w-0">
+        {/* Collapsed nav for narrow screens */}
+        <div className="xl:hidden flex gap-1 px-4 py-2 flex-wrap sticky top-0 z-20"
+          style={{ background: T.ground, borderBottom: `1px solid ${T.hairline}` }}>
+          {SECTIONS.map(s => (
+            <Chip key={s.id} label={s.label} onClick={() => jump(s.id)}
+              active={active === s.id} hue={active === s.id ? T.cyan : undefined} />
+          ))}
+        </div>
+
+        <div className="p-4">
+          {/* ═══ OVERVIEW ═══ */}
+          <section ref={el => { sectionRefs.current.overview = el }} className="mb-8 scroll-mt-4">
+            <div className="flex items-stretch overflow-x-auto mb-4"
+              style={{ border: `1px solid ${T.hairline}` }}>
+              <Tick label="ADDRESSABLE" value={`${fmtK(savings.low)}–${fmtK(savings.high)}`}
+                color={T.green} onClick={() => jump('savings')} />
+              <Tick label="OPEN WINDOWS" value={String(openWindows)} color={T.cyan} onClick={() => jump('act')} />
+              <Tick label="CRITICAL TERMS" value={String(criticalCount)}
+                color={criticalCount ? T.red : T.green} onClick={() => jump('audit')} />
+              <Tick label="NEXT ACT-BY"
+                value={nextAction ? `${nextAction.daysLeft}d` : '—'}
+                sub={nextAction ? nextAction.contract.slice(0, 20) : undefined}
+                color={nextAction ? urgencyColor(nextAction.daysLeft) : T.muted}
+                onClick={() => jump('act')} />
+              <div className="flex-1" style={{ borderRight: 'none' }} />
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <Module title="Next five decisions" onOpen={() => jump('act')}>
+                {calendar.length === 0
+                  ? <EmptyState title="Nothing due in the next 12 months" />
+                  : (
+                    <div className="space-y-1">
+                      {calendar.filter(i => !i.missed).slice(0, 5).map((i, n) => (
+                        <button key={i.contractId + n} onClick={() => focusInCalendar(i.contractId)}
+                          className="w-full flex items-baseline gap-2 px-2 py-1 text-left cursor-pointer hover:bg-[#0B1322]">
+                          <span className="text-[10px] tabular-nums flex-shrink-0 w-10 font-semibold"
+                            style={{ color: urgencyColor(i.daysLeft), fontFamily: T.mono }}>{i.daysLeft}d</span>
+                          <span className="text-[11px] truncate flex-1" style={{ color: T.dim }}>{i.contract}</span>
+                          <span className="text-[10px] tabular-nums flex-shrink-0"
+                            style={{ color: T.muted, fontFamily: T.mono }}>{fmtK(i.value)}</span>
+                        </button>
+                      ))}
                     </div>
-                    <div className="h-2 rounded-sm overflow-hidden" style={{ background: '#0F172A' }}>
-                      <div className="h-full rounded-sm" style={{ width: `${Math.max(pct, 1)}%`, background: KIND_COLORS[o.kind] }} />
+                  )}
+              </Module>
+
+              <Module title="Savings by kind" onOpen={() => jump('savings')}>
+                {opportunities.length === 0
+                  ? <EmptyState title="No opportunities detected" />
+                  : (
+                    <div className="space-y-2">
+                      {opportunities.slice(0, 3).map(o => (
+                        <MiniBar key={o.kind + o.title} label={o.title}
+                          value={`${fmtK(o.low)}–${fmtK(o.high)}`}
+                          pct={savings.high > 0 ? (o.high / savings.high) * 100 : 0}
+                          color={KIND_COLORS[o.kind] ?? T.cyan} />
+                      ))}
                     </div>
-                    <div className="text-[10px] mt-1" style={{ color: '#64748B' }}>{o.detail}</div>
-                    <div className="text-[9px] mt-0.5 italic" style={{ color: '#475569' }}>{o.assumption}</div>
+                  )}
+              </Module>
+
+              <Module title="Where we have leverage" onOpen={() => jump('suppliers')}>
+                <div className="grid grid-cols-2 gap-2">
+                  {leverage.slice(0, 4).map(s => (
+                    <div key={s.supplier} className="p-2" style={{ background: T.ground, border: `1px solid ${T.hairline}` }}>
+                      <div className="flex items-baseline justify-between gap-1">
+                        <span className="text-[10px] truncate" style={{ color: T.dim }}>{s.supplier}</span>
+                        <span className="text-[8px] tracking-wider flex-shrink-0"
+                          style={{ color: POSITION_COLORS[s.position], fontFamily: T.mono }}>
+                          {s.position.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="text-[10px] tabular-nums mt-0.5" style={{ color: T.muted, fontFamily: T.mono }}>
+                        {fmtK(s.spend)}
+                        {s.nextWindow && <span style={{ color: urgencyColor(s.nextWindow.daysLeft) }}> · {s.nextWindow.daysLeft}d</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </Module>
+
+              <Module title="Contract terms pulse" onOpen={() => jump('audit')}>
+                <div className="flex gap-4 mb-2">
+                  {(['critical', 'warning', 'info'] as const).map(sev => (
+                    <div key={sev}>
+                      <div className="text-[18px] font-bold tabular-nums"
+                        style={{ color: SEVERITY_COLORS[sev], fontFamily: T.mono }}>
+                        {findings.filter(f => f.severity === sev).length}
+                      </div>
+                      <SectionLabel>{sev}</SectionLabel>
+                    </div>
+                  ))}
+                </div>
+                {findings[0] && (
+                  <div className="text-[10px] leading-relaxed pt-2" style={{ color: T.muted, borderTop: `1px solid ${T.hairline}` }}>
+                    <span style={{ color: SEVERITY_COLORS[findings[0].severity] }}>▸ </span>
+                    {findings[0].title}
                   </div>
-                )
-              })}
+                )}
+              </Module>
             </div>
-            <div className="mt-3 pt-2 flex items-baseline justify-between" style={{ borderTop: '1px solid #2a3650' }}>
-              <span className="text-[10px]" style={{ color: '#64748B' }}>
-                Total, counting each contract once at its best applicable rate
-              </span>
-              <span className="text-sm font-bold tabular-nums" style={{ color: '#34D399' }}>
-                {fmtK(savings.low)}–{fmtK(savings.high)}
-              </span>
+          </section>
+
+          {/* ═══ ACT ═══ */}
+          <section ref={el => { sectionRefs.current.act = el }} className="mb-8 scroll-mt-4">
+            <Head title="What to act on"
+              subtitle="Every decision date in the next 12 months. Notice deadlines are separate events — that is when the decision has to be made." />
+            <Panel>
+              <ActTable calendar={calendar} onFocus={focusInCalendar} />
+            </Panel>
+          </section>
+
+          {/* ═══ SAVINGS ═══ */}
+          <section ref={el => { sectionRefs.current.savings = el }} className="mb-8 scroll-mt-4">
+            <Head title="Where the money could come from"
+              subtitle="Heuristic ranges, not quotes. Each carries the assumption it was built on." />
+            {opportunities.length === 0 ? (
+              <Panel><EmptyState title="No consolidation or renegotiation opportunities detected" /></Panel>
+            ) : (
+              <Panel className="p-4">
+                <div className="space-y-3">
+                  {opportunities.map(o => (
+                    <div key={o.kind + o.title}>
+                      <MiniBar label={o.title} value={`${fmtK(o.low)}–${fmtK(o.high)}`}
+                        pct={savings.high > 0 ? (o.high / savings.high) * 100 : 0}
+                        color={KIND_COLORS[o.kind] ?? T.cyan} />
+                      <div className="text-[10px] mt-1" style={{ color: T.muted }}>{o.detail}</div>
+                      <div className="text-[9px] mt-0.5 italic" style={{ color: T.faint }}>{o.assumption}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-3 pt-2 flex items-baseline justify-between" style={{ borderTop: `1px solid ${T.hairline}` }}>
+                  <span className="text-[10px]" style={{ color: T.muted }}>
+                    Total, counting each contract once at its best applicable rate
+                  </span>
+                  <span className="text-sm font-bold tabular-nums" style={{ color: T.green, fontFamily: T.mono }}>
+                    {fmtK(savings.low)}–{fmtK(savings.high)}
+                  </span>
+                </div>
+              </Panel>
+            )}
+          </section>
+
+          {/* ═══ SUPPLIERS ═══ */}
+          <section ref={el => { sectionRefs.current.suppliers = el }} className="mb-8 scroll-mt-4">
+            <SupplierBoard leverage={leverage} />
+          </section>
+
+          {/* ═══ AUDIT ═══ */}
+          <section ref={el => { sectionRefs.current.audit = el }} className="mb-8 scroll-mt-4">
+            <TermsAudit findings={findings} contracts={contracts} />
+          </section>
+
+          {/* ═══ CUTS ═══ */}
+          <section ref={el => { sectionRefs.current.cuts = el }} className="mb-8 scroll-mt-4">
+            <Head title="Cuts of the portfolio" subtitle="Where spend sits, what is risky, and when the load lands." />
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <RiskSpendScatter contracts={contracts} />
+              <RenewalLoad contracts={contracts} />
             </div>
-          </Card>
-        )}
-      </Section>
+            <div className="mt-3"><Heatmap contracts={contracts} /></div>
+            {paymentData ? (
+              <div className="mt-3"><PaymentHistogram contracts={contracts} /></div>
+            ) : (
+              <Panel className="mt-3 p-4">
+                <SectionLabel>PAYMENT TERMS</SectionLabel>
+                <p className="text-xs mt-1" style={{ color: T.muted }}>
+                  Not enough payment-terms data to analyse — map a payment terms column on import
+                  to unlock working-capital analysis.
+                </p>
+              </Panel>
+            )}
+          </section>
 
-      {/* ─── Supplier leverage ─── */}
-      <SupplierBoard leverage={leverage} onInspect={s => inspectInWeb({ type: 'supplier', name: s })} />
-
-      {/* ─── T&C audit ─── */}
-      <TermsAudit findings={findings} contracts={contracts} />
-
-      {/* ─── Sharper cuts ─── */}
-      <Section title="Cuts of the portfolio" subtitle="Where spend sits, what is risky, and when the load lands.">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <RiskSpendScatter contracts={contracts} />
-          <RenewalLoad contracts={contracts} />
+          {/* ═══ CLASSIC ═══ */}
+          <section ref={el => { sectionRefs.current.classic = el }} className="scroll-mt-4">
+            <ClassicViews summary={summary} byCategory={byCategory}
+              byDepartment={byDepartment} concentration={concentration} />
+          </section>
         </div>
-        <div className="mt-4">
-          <Heatmap contracts={contracts} />
-        </div>
-        {paymentData ? (
-          <div className="mt-4"><PaymentHistogram contracts={contracts} /></div>
-        ) : (
-          <Card className="mt-4">
-            <div className="text-sm font-semibold mb-1">Payment terms</div>
-            <p className="text-xs" style={{ color: '#64748B' }}>
-              Not enough payment-terms data to analyse — map a payment terms column on import
-              to unlock working-capital analysis.
-            </p>
-          </Card>
-        )}
-      </Section>
-
-      {/* ─── Classic views ─── */}
-      <ClassicViews
-        summary={summary} byCategory={byCategory} byDepartment={byDepartment}
-        concentration={concentration}
-      />
+      </div>
     </div>
+  )
+}
+
+/* ─── Shells ─── */
+
+function Head({ title, subtitle, right }: { title: string; subtitle?: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex items-end justify-between gap-3 mb-2 flex-wrap">
+      <div>
+        <h2 className="text-sm font-semibold" style={{ color: T.text }}>{title}</h2>
+        {subtitle && <p className="text-[11px] mt-0.5 max-w-3xl" style={{ color: T.muted }}>{subtitle}</p>}
+      </div>
+      {right}
+    </div>
+  )
+}
+
+function Module({ title, children, onOpen }: {
+  title: string; children: React.ReactNode; onOpen: () => void
+}) {
+  return (
+    <Panel className="p-3">
+      <div className="flex items-center justify-between mb-2">
+        <SectionLabel>{title}</SectionLabel>
+        <button onClick={onOpen} className="text-[9px] tracking-wider cursor-pointer hover:brightness-150"
+          style={{ color: T.cyan, fontFamily: T.mono }}>OPEN →</button>
+      </div>
+      {children}
+    </Panel>
+  )
+}
+
+/* ─── Act table ─── */
+
+function ActTable({ calendar, onFocus }: {
+  calendar: ActionItem[]; onFocus: (contractId: string) => void
+}) {
+  const [filter, setFilter] = useState<'all' | 'missed' | 'notice' | 'expiry'>('all')
+  const [limit, setLimit] = useState(25)
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  const rows = useMemo(() => calendar.filter(i =>
+    filter === 'all' ? true
+      : filter === 'missed' ? i.missed
+        : filter === 'notice' ? i.kind === 'notice-deadline'
+          : i.kind === 'expiry'), [calendar, filter])
+
+  const shown = rows.slice(0, limit)
+  const key = (i: ActionItem) => `${i.contractId}:${i.kind}`
+
+  const columns: Column<ActionItem>[] = [
+    {
+      key: 'actBy', header: 'Act by', sortValue: i => i.actBy, width: '92px',
+      render: i => <span className="tabular-nums">{fmtDate(i.actBy)}</span>,
+    },
+    {
+      key: 'left', header: 'Left', sortValue: i => i.daysLeft, width: '64px',
+      render: i => (
+        <span className="tabular-nums font-semibold" style={{ color: urgencyColor(i.daysLeft, i.missed) }}>
+          {i.missed ? 'missed' : `${i.daysLeft}d`}
+        </span>
+      ),
+    },
+    {
+      key: 'contract', header: 'Contract', sortValue: i => i.contract,
+      render: i => <span style={{ color: T.text }}>{i.contract}</span>,
+    },
+    {
+      key: 'supplier', header: 'Supplier', sortValue: i => i.supplier, width: '160px',
+      render: i => <EntityLink type="supplier" name={i.supplier} />,
+    },
+    {
+      key: 'value', header: 'Value', sortValue: i => i.value, width: '84px', align: 'right',
+      render: i => <span className="tabular-nums">{fmtK(i.value)}</span>,
+    },
+    {
+      key: 'kind', header: 'Type', sortValue: i => i.kind, width: '80px',
+      render: i => (
+        <span className="text-[9px] tracking-wider"
+          style={{ color: i.kind === 'notice-deadline' ? T.amber : T.muted }}>
+          {i.kind === 'notice-deadline' ? 'NOTICE' : 'EXPIRY'}
+        </span>
+      ),
+    },
+  ]
+
+  return (
+    <>
+      <div className="flex gap-1 p-2 flex-wrap" style={{ borderBottom: `1px solid ${T.hairline}` }}>
+        {([['all', 'ALL'], ['missed', 'MISSED'], ['notice', 'NOTICE'], ['expiry', 'EXPIRY']] as const).map(([v, l]) => (
+          <Chip key={v} label={l} onClick={() => setFilter(v)} active={filter === v}
+            hue={filter === v ? T.cyan : undefined} />
+        ))}
+        <div className="flex-1" />
+        <span className="text-[9px] tracking-wider self-center" style={{ color: T.muted, fontFamily: T.mono }}>
+          {rows.length} ITEMS
+        </span>
+      </div>
+      <DataTable rows={shown} columns={columns} rowKey={key}
+        initialSort={{ key: 'actBy', dir: 'asc' }}
+        expandedKey={expanded}
+        onRowClick={i => setExpanded(x => x === key(i) ? null : key(i))}
+        renderExpanded={i => (
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[11px]" style={{ color: T.dim }}>{i.action}</span>
+            <button onClick={e => { e.stopPropagation(); onFocus(i.contractId) }}
+              className="text-[9px] tracking-wider px-2 py-0.5 cursor-pointer flex-shrink-0"
+              style={{ color: T.cyan, border: `1px solid ${T.hairline}`, fontFamily: T.mono }}>
+              SEE ON TIMELINE →
+            </button>
+          </div>
+        )}
+        emptyLabel="Nothing matches this filter" />
+      {rows.length > limit && (
+        <button onClick={() => setLimit(l => l + 40)}
+          className="w-full py-1.5 text-[9px] tracking-wider cursor-pointer"
+          style={{ color: T.cyan, borderTop: `1px solid ${T.hairline}`, fontFamily: T.mono }}>
+          SHOW MORE — {rows.length - limit} REMAINING
+        </button>
+      )}
+    </>
   )
 }
 
 /* ─── Supplier leverage board ─── */
 
-function SupplierBoard({ leverage, onInspect }: {
-  leverage: SupplierLeverage[]; onInspect: (supplier: string) => void
-}) {
+function SupplierBoard({ leverage }: { leverage: SupplierLeverage[] }) {
   const [sort, setSort] = useState<'leverage' | 'spend' | 'window'>('leverage')
+  const [position, setPosition] = useState<'all' | 'strong' | 'balanced' | 'weak'>('all')
   const [open, setOpen] = useState<string | null>(null)
 
-  const sorted = useMemo(() => {
-    const l = [...leverage]
-    if (sort === 'spend') return l.sort((a, b) => b.spend - a.spend)
-    if (sort === 'window') {
-      return l.sort((a, b) => {
-        if (!a.nextWindow && !b.nextWindow) return b.spend - a.spend
-        if (!a.nextWindow) return 1
-        if (!b.nextWindow) return -1
-        return a.nextWindow.daysLeft - b.nextWindow.daysLeft
-      })
-    }
-    return l.sort((a, b) => b.leverageScore - a.leverageScore)
-  }, [leverage, sort])
+  const rows = useMemo(() => {
+    let l = position === 'all' ? [...leverage] : leverage.filter(s => s.position === position)
+    if (sort === 'spend') l = l.sort((a, b) => b.spend - a.spend)
+    else if (sort === 'window') l = l.sort((a, b) => {
+      if (!a.nextWindow && !b.nextWindow) return b.spend - a.spend
+      if (!a.nextWindow) return 1
+      if (!b.nextWindow) return -1
+      return a.nextWindow.daysLeft - b.nextWindow.daysLeft
+    })
+    else l = l.sort((a, b) => b.leverageScore - a.leverageScore)
+    return l
+  }, [leverage, sort, position])
 
   return (
-    <Section title="Supplier leverage"
-      subtitle="Our position against each supplier, and the levers available before the next window closes."
-      right={
-        <select value={sort} onChange={e => setSort(e.target.value as any)}
-          className="rounded-lg px-2 py-1 text-[11px] text-white"
-          style={{ background: '#0A0F1A', border: '1px solid #2a3650' }}>
-          <option value="leverage">Sort: leverage</option>
-          <option value="spend">Sort: spend</option>
-          <option value="window">Sort: next window</option>
-        </select>
-      }>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {sorted.slice(0, 10).map(s => {
-          const isOpen = open === s.supplier
-          return (
-            <Card key={s.supplier}>
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <button onClick={() => onInspect(s.supplier)}
-                    className="text-sm font-semibold text-white truncate cursor-pointer hover:underline inline-flex items-center gap-1">
-                    {s.supplier}<ExternalLink size={10} />
-                  </button>
-                  <div className="text-[10px] mt-0.5" style={{ color: '#64748B' }}>
-                    {fmtK(s.spend)} · {s.contractCount} contract{s.contractCount === 1 ? '' : 's'} · {s.departments.length} dept{s.departments.length === 1 ? '' : 's'}
-                  </div>
-                </div>
-                <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider flex-shrink-0"
-                  style={{ background: `${POSITION_COLORS[s.position]}18`, color: POSITION_COLORS[s.position] }}>
-                  {s.position}
-                </span>
-              </div>
-
-              {s.nextWindow && (
-                <div className="mt-2 rounded-lg px-2 py-1.5 flex items-center justify-between gap-2"
-                  style={{ background: '#0F172A' }}>
-                  <span className="text-[10px] truncate" style={{ color: '#94A3B8' }}>
-                    {s.nextWindow.contract}
-                  </span>
-                  <span className="text-[10px] font-semibold tabular-nums whitespace-nowrap"
-                    style={{ color: urgency(s.nextWindow.daysLeft, false) }}>
-                    act in {s.nextWindow.daysLeft}d
-                  </span>
-                </div>
-              )}
-
-              <div className="flex flex-wrap gap-1 mt-2">
-                {s.levers.map(l => (
-                  <span key={l.kind} className="text-[9px] px-1.5 py-0.5 rounded-full"
-                    style={{ background: '#0F172A', border: '1px solid #2a3650', color: '#94A3B8' }}>
-                    {l.kind.replace(/-/g, ' ')}
-                  </span>
-                ))}
-              </div>
-
-              <button onClick={() => setOpen(isOpen ? null : s.supplier)}
-                className="mt-2 text-[10px] cursor-pointer inline-flex items-center gap-1 hover:text-white"
-                style={{ color: '#64748B' }}>
-                {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                {isOpen ? 'Hide levers' : `${s.levers.length} lever${s.levers.length === 1 ? '' : 's'}`}
-              </button>
-
-              {isOpen && (
-                <div className="mt-2 space-y-2 pt-2" style={{ borderTop: '1px solid #2a3650' }}>
-                  {s.levers.map(l => (
-                    <div key={l.kind}>
-                      <div className="text-[11px] font-medium text-white">{l.title}</div>
-                      <div className="text-[10px] mt-0.5" style={{ color: '#94A3B8' }}>{l.detail}</div>
-                      {l.estimate && (
-                        <div className="text-[9px] mt-0.5" style={{ color: '#34D399' }}>
-                          {fmtK(l.estimate.low)}–{fmtK(l.estimate.high)}
-                          <span className="italic ml-1" style={{ color: '#475569' }}>· {l.estimate.assumption}</span>
-                        </div>
-                      )}
+    <>
+      <Head title="Supplier leverage"
+        subtitle="Our position against each supplier, and the levers available before the next window closes."
+        right={
+          <div className="flex gap-1 flex-wrap">
+            {(['all', 'strong', 'balanced', 'weak'] as const).map(p => (
+              <Chip key={p} label={p.toUpperCase()} onClick={() => setPosition(p)}
+                active={position === p}
+                hue={position === p ? (p === 'all' ? T.cyan : POSITION_COLORS[p]) : undefined} />
+            ))}
+            <span className="w-2" />
+            {(['leverage', 'spend', 'window'] as const).map(s => (
+              <Chip key={s} label={`SORT ${s.toUpperCase()}`} onClick={() => setSort(s)}
+                active={sort === s} hue={sort === s ? T.cyan : undefined} />
+            ))}
+          </div>
+        } />
+      {rows.length === 0 ? (
+        <Panel><EmptyState title="No suppliers in this position" /></Panel>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+          {rows.slice(0, 10).map(s => {
+            const isOpen = open === s.supplier
+            return (
+              <Panel key={s.supplier} className="p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[12px] font-semibold truncate" style={{ color: T.text }}>
+                      <EntityLink type="supplier" name={s.supplier} color={T.text} />
                     </div>
+                    <div className="text-[10px] mt-0.5 tabular-nums" style={{ color: T.muted, fontFamily: T.mono }}>
+                      {fmtK(s.spend)} · {s.contractCount} contract{s.contractCount === 1 ? '' : 's'} · {s.departments.length} dept{s.departments.length === 1 ? '' : 's'}
+                    </div>
+                  </div>
+                  <span className="text-[8px] font-semibold px-1.5 py-0.5 tracking-wider flex-shrink-0"
+                    style={{
+                      background: `${POSITION_COLORS[s.position]}18`,
+                      color: POSITION_COLORS[s.position], fontFamily: T.mono,
+                    }}>
+                    {s.position.toUpperCase()}
+                  </span>
+                </div>
+
+                {s.nextWindow && (
+                  <div className="mt-2 px-2 py-1 flex items-center justify-between gap-2"
+                    style={{ background: T.ground }}>
+                    <span className="text-[10px] truncate" style={{ color: T.dim }}>{s.nextWindow.contract}</span>
+                    <span className="text-[10px] font-semibold tabular-nums whitespace-nowrap"
+                      style={{ color: urgencyColor(s.nextWindow.daysLeft), fontFamily: T.mono }}>
+                      ACT IN {s.nextWindow.daysLeft}D
+                    </span>
+                  </div>
+                )}
+
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {s.levers.map(l => (
+                    <span key={l.kind} className="text-[9px] px-1.5 py-0.5 tracking-wider"
+                      style={{ background: T.ground, border: `1px solid ${T.hairline}`, color: T.muted, fontFamily: T.mono }}>
+                      {l.kind.replace(/-/g, ' ').toUpperCase()}
+                    </span>
                   ))}
                 </div>
-              )}
-            </Card>
-          )
-        })}
-      </div>
-    </Section>
+
+                <button onClick={() => setOpen(isOpen ? null : s.supplier)}
+                  className="mt-2 text-[10px] cursor-pointer inline-flex items-center gap-1 hover:brightness-150"
+                  style={{ color: T.muted, fontFamily: T.mono }}>
+                  {isOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  {isOpen ? 'HIDE LEVERS' : `${s.levers.length} LEVER${s.levers.length === 1 ? '' : 'S'}`}
+                </button>
+
+                {isOpen && (
+                  <div className="mt-2 space-y-2 pt-2" style={{ borderTop: `1px solid ${T.hairline}` }}>
+                    {s.levers.map(l => (
+                      <div key={l.kind}>
+                        <div className="text-[11px] font-medium" style={{ color: T.text }}>{l.title}</div>
+                        <div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{l.detail}</div>
+                        {l.estimate && (
+                          <div className="text-[9px] mt-0.5" style={{ color: T.green, fontFamily: T.mono }}>
+                            {fmtK(l.estimate.low)}–{fmtK(l.estimate.high)}
+                            <span className="italic ml-1" style={{ color: T.faint }}>· {l.estimate.assumption}</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </Panel>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }
 
-/* ─── Terms audit table ─── */
+/* ─── Terms audit ─── */
 
 const CLAUSE_LABELS: Record<ClauseKind, string> = {
-  'auto-renewal': 'Auto-renewal',
-  'notice': 'Notice',
-  'term-length': 'Term length',
-  'payment': 'Payment',
-  'raw-scan': 'Source scan',
-  'status': 'Status',
+  'auto-renewal': 'AUTO-RENEWAL',
+  'notice': 'NOTICE',
+  'term-length': 'TERM',
+  'payment': 'PAYMENT',
+  'raw-scan': 'SOURCE SCAN',
+  'status': 'STATUS',
 }
 
 function TermsAudit({ findings, contracts }: { findings: TermFinding[]; contracts: Contract[] }) {
-  const [filter, setFilter] = useState<ClauseKind | 'all'>('all')
-  const kinds = useMemo(
-    () => [...new Set(findings.map(f => f.clause))] as ClauseKind[],
-    [findings])
-  const shown = filter === 'all' ? findings : findings.filter(f => f.clause === filter)
+  const [clause, setClause] = useState<ClauseKind | 'all'>('all')
+  const [severity, setSeverity] = useState<'all' | 'critical' | 'warning' | 'info'>('all')
+  const [expanded, setExpanded] = useState<string | null>(null)
+
+  const kinds = useMemo(() => [...new Set(findings.map(f => f.clause))] as ClauseKind[], [findings])
+  const rows = useMemo(() => findings.filter(f =>
+    (clause === 'all' || f.clause === clause) &&
+    (severity === 'all' || f.severity === severity)), [findings, clause, severity])
+
+  const columns: Column<TermFinding>[] = [
+    {
+      key: 'severity', header: '', width: '18px', sortValue: f => ({ critical: 0, warning: 1, info: 2 })[f.severity],
+      render: f => (
+        <span style={{
+          width: '7px', height: '7px', display: 'inline-block',
+          borderRadius: f.severity === 'critical' ? '1px' : '50%',
+          background: SEVERITY_COLORS[f.severity],
+        }} />
+      ),
+    },
+    {
+      key: 'clause', header: 'Clause', width: '110px', sortValue: f => f.clause,
+      render: f => (
+        <span className="text-[9px] tracking-wider" style={{ color: T.muted }}>
+          {CLAUSE_LABELS[f.clause]}
+        </span>
+      ),
+    },
+    {
+      key: 'title', header: 'Finding', sortValue: f => f.title,
+      render: f => <span style={{ color: T.text }}>{f.title}</span>,
+    },
+    {
+      key: 'exposure', header: 'Exposure', width: '90px', align: 'right', sortValue: f => f.exposure,
+      render: f => f.exposure ? (
+        <span className="tabular-nums" style={{ color: SEVERITY_COLORS[f.severity] }}>{fmtK(f.exposure)}</span>
+      ) : <span style={{ color: T.faint }}>—</span>,
+    },
+    {
+      key: 'actBy', header: 'Act by', width: '92px', sortValue: f => f.actBy,
+      render: f => f.actBy
+        ? <span className="tabular-nums">{fmtDate(f.actBy)}</span>
+        : <span style={{ color: T.faint }}>—</span>,
+    },
+  ]
 
   return (
-    <Section title="Terms & conditions audit"
-      subtitle={`${findings.length} finding${findings.length === 1 ? '' : 's'} across ${contracts.length} contracts.`}
-      right={
-        <div className="flex gap-1 flex-wrap">
-          {(['all', ...kinds] as const).map(k => (
-            <button key={k} onClick={() => setFilter(k as any)}
-              className="text-[10px] px-2 py-0.5 rounded-full cursor-pointer transition-colors"
-              style={{
-                background: filter === k ? '#1E293B' : 'transparent',
-                border: '1px solid #2a3650',
-                color: filter === k ? '#F1F5F9' : '#64748B',
-              }}>
-              {k === 'all' ? 'All' : CLAUSE_LABELS[k as ClauseKind]}
-            </button>
-          ))}
-        </div>
-      }>
-      {shown.length === 0 ? (
-        <Card><p className="text-xs" style={{ color: '#64748B' }}>No findings in this category.</p></Card>
-      ) : (
-        <div className="space-y-2">
-          {shown.map(f => (
-            <Card key={f.id} className={f.clause === 'raw-scan' ? 'border-dashed' : ''}>
-              <div className="flex items-start gap-2.5">
-                <div className="flex-shrink-0 mt-1" style={{
-                  width: '7px', height: '7px',
-                  borderRadius: f.severity === 'critical' ? '1px' : '50%',
-                  background: SEVERITY_COLORS[f.severity],
-                }} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                    <span className="text-xs font-medium text-white">{f.title}</span>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      {f.actBy && (
-                        <span className="text-[9px] tabular-nums" style={{ color: '#64748B' }}>
-                          act by {fmtDate(f.actBy)}
-                        </span>
-                      )}
-                      {f.exposure !== undefined && f.exposure > 0 && (
-                        <span className="text-[10px] px-1.5 rounded font-semibold tabular-nums"
-                          style={{ background: `${SEVERITY_COLORS[f.severity]}15`, color: SEVERITY_COLORS[f.severity] }}>
-                          {fmtK(f.exposure)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-[11px] mt-1" style={{ color: '#94A3B8' }}>{f.detail}</div>
-                  <div className="text-[10px] mt-1 flex items-start gap-1.5" style={{ color: '#38BDF8' }}>
-                    <span style={{ color: '#475569' }}>Fix:</span>{f.fix}
-                  </div>
-                  {f.clause === 'raw-scan' && (
-                    <div className="text-[9px] mt-1 italic" style={{ color: '#475569' }}>
-                      Text match on imported data — review manually.
-                    </div>
-                  )}
-                </div>
+    <>
+      <Head title="Terms & conditions audit"
+        subtitle={`${findings.length} finding${findings.length === 1 ? '' : 's'} across ${contracts.length} contracts.`}
+        right={
+          <div className="flex gap-1 flex-wrap">
+            {(['all', 'critical', 'warning', 'info'] as const).map(s => (
+              <Chip key={s} label={s.toUpperCase()} onClick={() => setSeverity(s)} active={severity === s}
+                hue={severity === s ? (s === 'all' ? T.cyan : SEVERITY_COLORS[s]) : undefined} />
+            ))}
+          </div>
+        } />
+      <div className="flex gap-1 mb-2 flex-wrap">
+        <Chip label="ALL CLAUSES" onClick={() => setClause('all')} active={clause === 'all'}
+          hue={clause === 'all' ? T.cyan : undefined} />
+        {kinds.map(k => (
+          <Chip key={k} label={CLAUSE_LABELS[k]} onClick={() => setClause(k)} active={clause === k}
+            hue={clause === k ? T.cyan : undefined} />
+        ))}
+      </div>
+      <Panel>
+        <DataTable rows={rows} columns={columns} rowKey={f => f.id}
+          initialSort={{ key: 'severity', dir: 'asc' }}
+          expandedKey={expanded}
+          onRowClick={f => setExpanded(x => x === f.id ? null : f.id)}
+          renderExpanded={f => (
+            <div>
+              <div className="text-[11px] leading-relaxed" style={{ color: T.dim }}>{f.detail}</div>
+              <div className="text-[10px] mt-1.5 flex items-start gap-1.5" style={{ color: T.cyan }}>
+                <span style={{ color: T.faint }}>FIX:</span>{f.fix}
               </div>
-            </Card>
-          ))}
-        </div>
-      )}
-    </Section>
+              {f.clause === 'raw-scan' && (
+                <div className="text-[9px] mt-1 italic" style={{ color: T.faint }}>
+                  Text match on imported data — review the agreement to confirm.
+                </div>
+              )}
+            </div>
+          )}
+          emptyLabel="No findings match these filters" />
+      </Panel>
+    </>
+  )
+}
+/* Helpers retained for the collapsed classic views. */
+function scoreClass(s: number) {
+  return s >= 80 ? 'bg-green-900/30 text-green-400'
+    : s >= 55 ? 'bg-amber-900/30 text-amber-400'
+      : 'bg-red-900/30 text-red-400'
+}
+
+function StatTile({ value, label }: { value: string | number; label: string }) {
+  return (
+    <Panel className="p-3">
+      <div className="text-lg font-bold tabular-nums" style={{ color: T.text, fontFamily: T.mono }}>{value}</div>
+      <div className="text-[10px] mt-0.5" style={{ color: T.muted }}>{label}</div>
+    </Panel>
   )
 }
 
-/* ─── Cuts ─── */
+/* ─── Charts and classic views ─── */
 
 function RiskSpendScatter({ contracts }: { contracts: Contract[] }) {
   const data = useMemo(() => contracts
@@ -468,7 +672,7 @@ function RiskSpendScatter({ contracts }: { contracts: Contract[] }) {
     }), [contracts])
 
   return (
-    <Card>
+    <Panel className="p-4">
       <h3 className="text-sm font-semibold mb-1">Risk against spend</h3>
       <p className="text-[10px] mb-2" style={{ color: '#64748B' }}>
         The top-right corner is what keeps you up at night: large and exposed.
@@ -481,7 +685,7 @@ function RiskSpendScatter({ contracts }: { contracts: Contract[] }) {
           <YAxis type="number" dataKey="y" scale="log" domain={['auto', 'auto']}
             tickFormatter={v => `€${(v / 1000).toFixed(0)}k`} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
           <ZAxis range={[40, 40]} />
-          <Tooltip
+          <RTooltip
             cursor={{ strokeDasharray: '3 3', stroke: '#334155' }}
             formatter={(v: any, n: any) => n === 'y' ? fmtMoney(Number(v)) : v}
             labelFormatter={() => ''}
@@ -502,7 +706,7 @@ function RiskSpendScatter({ contracts }: { contracts: Contract[] }) {
           </Scatter>
         </ScatterChart>
       </ResponsiveContainer>
-    </Card>
+    </Panel>
   )
 }
 
@@ -529,7 +733,7 @@ function RenewalLoad({ contracts }: { contracts: Contract[] }) {
   }, [contracts])
 
   return (
-    <Card>
+    <Panel className="p-4">
       <h3 className="text-sm font-semibold mb-1">Renewal load by quarter</h3>
       <p className="text-[10px] mb-2" style={{ color: '#64748B' }}>
         {data.length === 0 ? 'No expiries in the next two years.' : 'Value reaching its end date, next two years.'}
@@ -538,12 +742,12 @@ function RenewalLoad({ contracts }: { contracts: Contract[] }) {
         <BarChart data={data} margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
           <XAxis dataKey="quarter" tick={{ fill: '#8fa0bd', fontSize: 10 }} />
           <YAxis tickFormatter={v => `€${(v / 1000).toFixed(0)}k`} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
-          <Tooltip formatter={(v) => fmtMoney(Number(v))}
+          <RTooltip formatter={(v) => fmtMoney(Number(v))}
             contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
           <Bar dataKey="spend" fill="#38BDF8" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
-    </Card>
+    </Panel>
   )
 }
 
@@ -566,7 +770,7 @@ function Heatmap({ contracts }: { contracts: Contract[] }) {
   }, [contracts])
 
   return (
-    <Card>
+    <Panel className="p-4">
       <h3 className="text-sm font-semibold mb-1">Department against category</h3>
       <p className="text-[10px] mb-2" style={{ color: '#64748B' }}>
         Who buys what. Shading is log-scaled so small cells stay visible.
@@ -612,7 +816,7 @@ function Heatmap({ contracts }: { contracts: Contract[] }) {
           </tbody>
         </table>
       </div>
-    </Card>
+    </Panel>
   )
 }
 
@@ -638,7 +842,7 @@ function PaymentHistogram({ contracts }: { contracts: Contract[] }) {
   }, [contracts])
 
   return (
-    <Card>
+    <Panel className="p-4">
       <h3 className="text-sm font-semibold mb-1">Payment terms distribution</h3>
       <p className="text-[10px] mb-2" style={{ color: '#64748B' }}>
         Spend-weighted average: <span style={{ color: '#34D399' }}>{Math.round(weightedAvg)} days</span>
@@ -647,11 +851,11 @@ function PaymentHistogram({ contracts }: { contracts: Contract[] }) {
         <BarChart data={data} margin={{ top: 5, right: 10, bottom: 5, left: 5 }}>
           <XAxis dataKey="bucket" tick={{ fill: '#8fa0bd', fontSize: 10 }} />
           <YAxis allowDecimals={false} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
-          <Tooltip contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
+          <RTooltip contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
           <Bar dataKey="count" fill="#34D399" radius={[4, 4, 0, 0]} />
         </BarChart>
       </ResponsiveContainer>
-    </Card>
+    </Panel>
   )
 }
 
@@ -720,39 +924,39 @@ function ClassicViews({ summary, byCategory, byDepartment, concentration }: {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-            <Card>
+            <Panel className="p-4">
               <h3 className="text-sm font-semibold mb-3">Spend by department</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={spendByDept} layout="vertical">
                   <XAxis type="number" tickFormatter={v => `€${(v / 1000).toFixed(0)}k`} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
                   <YAxis type="category" dataKey="name" width={100} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
-                  <Tooltip formatter={(v) => fmtMoney(Number(v))} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
+                  <RTooltip formatter={(v) => fmtMoney(Number(v))} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
                   <Bar dataKey="spend" fill="#4da3ff" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
-            <Card>
+            </Panel>
+            <Panel className="p-4">
               <h3 className="text-sm font-semibold mb-3">Spend by category (top 12)</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <BarChart data={spendByCat} layout="vertical">
                   <XAxis type="number" tickFormatter={v => `€${(v / 1000).toFixed(0)}k`} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
                   <YAxis type="category" dataKey="name" width={100} tick={{ fill: '#8fa0bd', fontSize: 10 }} />
-                  <Tooltip formatter={(v) => fmtMoney(Number(v))} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
+                  <RTooltip formatter={(v) => fmtMoney(Number(v))} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
                   <Bar dataKey="spend" fill="#ffb347" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </Card>
-            <Card>
+            </Panel>
+            <Panel className="p-4">
               <h3 className="text-sm font-semibold mb-3">Supplier spend concentration</h3>
               <ResponsiveContainer width="100%" height={200}>
                 <AreaChart data={concData}>
                   <XAxis dataKey="x" tick={{ fill: '#8fa0bd', fontSize: 10 }} />
                   <YAxis tick={{ fill: '#8fa0bd', fontSize: 10 }} tickFormatter={v => `${v}%`} domain={[0, 100]} />
-                  <Tooltip formatter={(v) => `${v}%`} labelFormatter={(l) => concData[Number(l) - 1]?.name ?? ''} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
+                  <RTooltip formatter={(v) => `${v}%`} labelFormatter={(l) => concData[Number(l) - 1]?.name ?? ''} contentStyle={{ background: '#1d2639', border: '1px solid #2a3650', borderRadius: 8, fontSize: 12 }} />
                   <Area type="monotone" dataKey="y" stroke="#ff6b81" fill="rgba(255,107,129,0.15)" />
                 </AreaChart>
               </ResponsiveContainer>
-            </Card>
+            </Panel>
           </div>
 
           <h3 className="text-sm font-semibold mb-2">Per category</h3>

@@ -1,4 +1,4 @@
-import { useState, useRef, type ReactNode, type CSSProperties } from 'react'
+import { useState, useRef, Fragment, type ReactNode, type CSSProperties } from 'react'
 import { T } from './theme'
 import { useUIStore } from '../store/uiStore'
 import { nextSort, sortRows, type SortState } from './sort'
@@ -276,8 +276,8 @@ export function DataTable<T>({
             const key = rowKey(row)
             const expanded = expandedKey === key
             return (
-              <>
-                <tr key={key}
+              <Fragment key={key}>
+                <tr
                   tabIndex={onRowClick ? 0 : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
                   onKeyDown={onRowClick ? e => {
@@ -296,13 +296,13 @@ export function DataTable<T>({
                   ))}
                 </tr>
                 {expanded && renderExpanded && (
-                  <tr key={key + ':exp'} style={{ background: T.panelRaised }}>
+                  <tr style={{ background: T.panelRaised }}>
                     <td colSpan={columns.length} className="px-3 py-2">
                       {renderExpanded(row)}
                     </td>
                   </tr>
                 )}
-              </>
+              </Fragment>
             )
           })}
         </tbody>
