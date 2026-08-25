@@ -211,3 +211,159 @@ describe('urgencyColor', () => {
     expect(urgencyColor(rowFor(500))).toBe('#475569')
   })
 })
+
+/* ─── Zoom, pan, density, partition (UX2) ─── */
+
+import {
+  fitWindow, zoomWindow, panWindow, monthDensity, partitionRows, decisionPoints,
+  MIN_WINDOW_DAYS, MAX_WINDOW_DAYS,
+} from '../analytics/timeline'
+
+describe('fitWindow', () => {
+  it('hugs the data instead of spanning empty years', () => {
+    const cs = [contract({ endDate: inDays(30) }), contract({ endDate: inDays(90) })]
+    const w = fitWindow(cs, NOW)
+    const days = (w.end.getTime() - w.start.getTime()) / DAY
+    expect(days).toBeLessThan(200)
+    expect(w.start.getTime()).toBeLessThanOrEqual(NOW.getTime())
+  })
+
+  it('never collapses below the minimum window', () => {
+    const cs = [contract({ endDate: inDays(1) })]
+    const w = fitWindow(cs, NOW)
+    expect((w.end.getTime() - w.start.getTime()) / DAY).toBeGreaterThanOrEqual(MIN_WINDOW_DAYS)
+  })
+
+  it('falls back sensibly with no dated contracts', () => {
+    const w = fitWindow([contract({ endDate: undefined })], NOW)
+    expect(w.end.getTime()).toBeGreaterThan(w.start.getTime())
+  })
+})
+
+describe('zoomWindow', () => {
+  const base = { start: new Date('2026-01-01'), end: new Date('2027-01-01') }
+
+  it('shrinks and grows the span', () => {
+    expect(zoomWindow(base, 0.5).end.getTime() - zoomWindow(base, 0.5).start.getTime())
+      .toBeLessThan(base.end.getTime() - base.start.getTime())
+    expect(zoomWindow(base, 2).end.getTime() - zoomWindow(base, 2).start.getTime())
+      .toBeGreaterThan(base.end.getTime() - base.start.getTime())
+  })
+
+  it('keeps the focus date under the cursor', () => {
+    const span = base.end.getTime() - base.start.getTime()
+    const focusTime = base.start.getTime() + span * 0.25
+    const z = zoomWindow(base, 0.5, 0.25)
+    const newSpan = z.end.getTime() - z.start.getTime()
+    const newFocusPct = (focusTime - z.start.getTime()) / newSpan
+    expect(newFocusPct).toBeCloseTo(0.25, 5)
+  })
+
+  it('clamps to the min and max window', () => {
+    const tiny = zoomWindow(base, 0.0001)
+    expect((tiny.end.getTime() - tiny.start.getTime()) / DAY).toBeCloseTo(MIN_WINDOW_DAYS, 0)
+    const huge = zoomWindow(base, 10000)
+    expect((huge.end.getTime() - huge.start.getTime()) / DAY).toBeCloseTo(MAX_WINDOW_DAYS, 0)
+  })
+})
+
+describe('panWindow', () => {
+  it('slides without changing the span', () => {
+    const base = { start: new Date('2026-01-01'), end: new Date('2027-01-01') }
+    const p = panWindow(base, 0.5)
+    expect(p.end.getTime() - p.start.getTime()).toBe(base.end.getTime() - base.start.getTime())
+    expect(p.start.getTime()).toBeGreaterThan(base.start.getTime())
+  })
+})
+
+describe('monthDensity', () => {
+  it('buckets expiring value by month', () => {
+    const cs = [
+      contract({ endDate: new Date('2026-08-10'), annualValue: 100 }),
+      contract({ endDate: new Date('2026-08-20'), annualValue: 200 }),
+      contract({ endDate: new Date('2026-09-05'), annualValue: 50 }),
+    ]
+    const win = fitWindow(cs, NOW)
+    const d = monthDensity(timelineRows(cs, win, NOW), win)
+    expect(d).toHaveLength(2)
+    expect(d[0].value).toBe(300)
+    expect(d[0].count).toBe(2)
+    expect(d[1].value).toBe(50)
+  })
+
+  it('is empty when nothing is in range', () => {
+    expect(monthDensity([], fitWindow([], NOW))).toEqual([])
+  })
+})
+
+describe('partitionRows', () => {
+  it('separates decidable, upcoming and overdue', () => {
+    const cs = [
+      contract({ name: 'Decidable', endDate: inDays(200), noticePeriodDays: 30 }),
+      contract({ name: 'Upcoming', endDate: inDays(150) }),
+      contract({ name: 'Expired', endDate: inDays(-20) }),
+    ]
+    const win = fitWindow(cs, NOW)
+    const p = partitionRows(timelineRows(cs, win, NOW), NOW)
+    expect(p.decidable.map(r => r.contract.name)).toEqual(['Decidable'])
+    expect(p.upcoming.map(r => r.contract.name)).toEqual(['Upcoming'])
+    expect(p.overdue.map(r => r.contract.name)).toEqual(['Expired'])
+  })
+
+  it('treats a closed notice window as no longer decidable', () => {
+    const cs = [contract({ endDate: inDays(20), noticePeriodDays: 60, autoRenew: true })]
+    const win = fitWindow(cs, NOW)
+    const p = partitionRows(timelineRows(cs, win, NOW), NOW)
+    expect(p.decidable).toHaveLength(0)
+    expect(p.upcoming).toHaveLength(1)
+  })
+
+  it('orders decidable rows by act-by date', () => {
+    const cs = [
+      contract({ name: 'Later', endDate: inDays(300), noticePeriodDays: 30 }),
+      contract({ name: 'Sooner', endDate: inDays(100), noticePeriodDays: 30 }),
+    ]
+    const win = fitWindow(cs, NOW)
+    const p = partitionRows(timelineRows(cs, win, NOW), NOW)
+    expect(p.decidable.map(r => r.contract.name)).toEqual(['Sooner', 'Later'])
+  })
+})
+
+describe('decisionPoints', () => {
+  it('emits one point per notice deadline inside the window', () => {
+    const cs = [
+      contract({ endDate: inDays(200), noticePeriodDays: 30 }),
+      contract({ endDate: inDays(150) }),
+    ]
+    const win = fitWindow(cs, NOW)
+    const pts = decisionPoints(timelineRows(cs, win, NOW), win, NOW)
+    expect(pts).toHaveLength(1)
+    expect(pts[0].pct).toBeGreaterThanOrEqual(0)
+    expect(pts[0].pct).toBeLessThanOrEqual(100)
+  })
+
+  it('marks a passed deadline as missed', () => {
+    const cs = [contract({ endDate: inDays(20), noticePeriodDays: 60, autoRenew: true })]
+    // The deadline sits 40 days in the past, so the window must reach back
+    // past it — a fitted window would legitimately exclude the point.
+    const win = { start: inDays(-90), end: inDays(90) }
+    const pts = decisionPoints(timelineRows(cs, win, NOW), win, NOW)
+    expect(pts[0].missed).toBe(true)
+  })
+
+  it('omits deadlines that fall outside the window', () => {
+    const cs = [contract({ endDate: inDays(20), noticePeriodDays: 60, autoRenew: true })]
+    const win = fitWindow(cs, NOW)
+    expect(decisionPoints(timelineRows(cs, win, NOW), win, NOW)).toHaveLength(0)
+  })
+})
+
+describe('unknownStart', () => {
+  it('flags rows whose term start is not recorded', () => {
+    const cs = [contract({ endDate: inDays(100) }), contract({ endDate: inDays(100), startDate: inDays(-100) })]
+    const win = fitWindow(cs, NOW)
+    const rows = timelineRows(cs, win, NOW)
+    expect(rows.some(r => r.unknownStart)).toBe(true)
+    expect(rows.some(r => !r.unknownStart)).toBe(true)
+  })
+})

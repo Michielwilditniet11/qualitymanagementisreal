@@ -13,9 +13,14 @@ interface UIState {
   setView: (v: View) => void
   /** Consumed once by WebScreen, then cleared. */
   pendingSelection: PendingSelection | null
+  /** Contract id another tab asked the Calendar to focus; consumed once. */
+  pendingCalendarFocus: string | null
   /** Jump to the Spider Web with a node selected. */
   inspectInWeb: (sel: PendingSelection) => void
   clearPendingSelection: () => void
+  /** Jump to the Calendar with a contract expanded. */
+  focusInCalendar: (contractId: string) => void
+  clearPendingCalendarFocus: () => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -24,4 +29,7 @@ export const useUIStore = create<UIState>((set) => ({
   pendingSelection: null,
   inspectInWeb: (sel) => set({ view: 'web', pendingSelection: sel }),
   clearPendingSelection: () => set({ pendingSelection: null }),
+  pendingCalendarFocus: null,
+  focusInCalendar: (contractId) => set({ view: 'calendar', pendingCalendarFocus: contractId }),
+  clearPendingCalendarFocus: () => set({ pendingCalendarFocus: null }),
 }))

@@ -116,12 +116,16 @@ export function TerminalInput({ value, onChange, placeholder, width = '9rem' }: 
  * Hover card replacing native `title` attributes, which are slow, unstyled
  * and inaccessible to keyboard users.
  */
-export function Tooltip({ children, content, side = 'top' }: {
+export function Tooltip({ children, content, side = 'top', className = '', style }: {
   children: ReactNode; content: ReactNode; side?: 'top' | 'bottom'
+  /** Applied to the wrapper, so a tooltipped element can itself be
+   *  absolutely positioned by its parent without the wrapper stealing the
+   *  containing block. */
+  className?: string; style?: CSSProperties
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <span className="relative inline-flex"
+    <span className={`inline-flex ${className || 'relative'}`} style={style}
       onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}
       onFocus={() => setOpen(true)} onBlur={() => setOpen(false)}>
       {children}
