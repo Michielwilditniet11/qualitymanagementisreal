@@ -5,6 +5,7 @@ import type { Contract } from '../../data/types'
 import {
   timelineRows, monthTicks, todayPct, annotate,
   fitWindow, zoomWindow, panWindow, monthDensity, partitionRows, decisionPoints,
+  decidableWithin,
   type TimeWindow, type TimelineRow,
 } from '../../analytics/timeline'
 import { findGaps } from '../../analytics/gaps'
@@ -93,11 +94,15 @@ export default function CalendarScreen() {
   const parts = useMemo(() => partitionRows(rows), [rows])
   const points = useMemo(() => decisionPoints(rows, window_), [rows, window_])
   const undated = useMemo(() => filtered.filter(c => !c.endDate), [filtered])
-  const gaps = useMemo(() => findGaps(contracts, []), [contracts])
+  const gaps = useMemo(() => findGaps(contracts), [contracts])
 
   const unplanned = gaps.find(g => g.kind === 'expiring-unplanned')
   const missedValue = parts.overdue.reduce((s, r) => s + (r.contract.annualValue ?? 0), 0)
-  const decidableValue = parts.decidable.reduce((s, r) => s + (r.contract.annualValue ?? 0), 0)
+  // The tile is labelled "<=90D", so its count and its money must both be
+  // the 90-day set — not the count of one window beside the value of another.
+  // Measured on the decision date, which is what "decidable" means here.
+  const decidable90 = decidableWithin(parts.decidable, 90)
+  const decidableValue = decidable90.reduce((s, r) => s + (r.contract.annualValue ?? 0), 0)
   const silent = rows.filter(r => r.silentRenewalRisk)
   const next = parts.decidable[0]
 
@@ -206,7 +211,7 @@ export default function CalendarScreen() {
       <div className="flex items-stretch overflow-x-auto flex-shrink-0"
         style={{ borderBottom: `1px solid ${T.hairline}` }}>
         <Tick label="DECIDABLE ≤90D"
-          value={String(parts.decidable.filter(r => r.noticeDate && r.daysUntil <= 365).length)}
+          value={String(decidable90.length)}
           sub={fmtK(decidableValue)} color={T.cyan}
           onClick={() => { setShowOverdue(false); setWindow(fitWindow(contracts)) }} />
         <Tick label="NEXT ACT-BY"
@@ -219,7 +224,7 @@ export default function CalendarScreen() {
           color={silent.length ? T.red : T.green} />
         <Tick label="EXPIRED" value={String(parts.overdue.length)} sub={fmtK(missedValue)}
           color={T.red} onClick={() => setShowOverdue(v => !v)} />
-        <Tick label="NO SUCCESSOR" value={unplanned ? String(unplanned.nodeKeys.length) : '0'}
+        <Tick label="NO SUCCESSOR" value={unplanned ? String(unplanned.contractCount) : '0'}
           sub={unplanned ? fmtK(unplanned.exposure) : undefined} color={T.magenta} />
         <div className="flex-1" style={{ borderRight: 'none' }} />
         <button onClick={() => downloadICS(rows, 'procurement-renewals.ics')}

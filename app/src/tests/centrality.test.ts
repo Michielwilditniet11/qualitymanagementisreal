@@ -8,7 +8,9 @@ let seq = 0
 function contract(over: Partial<Contract> = {}): Contract {
   seq++
   return {
-    id: `c${seq}`,
+    // Contract nodes are keyed by id, so name the id after the contract
+    // to keep the expected keys in these tests readable.
+    id: over.name ?? `c${seq}`,
     name: over.name ?? `Contract ${seq}`,
     supplier: 'Acme',
     category: 'IT',
@@ -91,7 +93,7 @@ describe('completeness', () => {
 
   it('reports a sparse contract as incomplete', () => {
     const bare = buildGraph(
-      [{ id: 'z', name: 'Bare', supplier: '', category: '', department: '', tags: [], raw: {} }],
+      [{ id: 'Bare', name: 'Bare', supplier: '', category: '', department: '', tags: [], raw: {} }],
       10, 10
     )
     expect(completeness(bare.nodes.find(n => n.key === 'contract::Bare')!)).toBeLessThan(0.5)

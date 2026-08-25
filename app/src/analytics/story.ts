@@ -1,5 +1,6 @@
 import type { Contract, GraphNode } from '../data/types'
 import { fmtK } from './risk'
+import { contractKey } from '../graph/buildGraph'
 import { generateInsights, totalValueAtRisk } from './insights'
 import { computeCentrality, assessImpact } from './centrality'
 import { negotiationCalendar } from './levers'
@@ -124,7 +125,7 @@ export function buildStory(contracts: Contract[], nodes: GraphNode[]): StoryStep
       nodeKeys: calendar.slice(0, 15)
         .map(i => contracts.find(c => c.id === i.contractId))
         .filter((c): c is Contract => Boolean(c))
-        .map(c => `contract::${c.name}`),
+        .map(contractKey),
       camera: 'frame',
       source: 'negotiation calendar',
     })
@@ -158,7 +159,7 @@ export function buildStory(contracts: Contract[], nodes: GraphNode[]): StoryStep
       nodeKeys: actions
         .map(a => contracts.find(c => c.id === a.contractId))
         .filter((c): c is Contract => Boolean(c))
-        .map(c => `contract::${c.name}`),
+        .map(contractKey),
       camera: 'frame',
       source: 'savings estimator · negotiation calendar',
     })

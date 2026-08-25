@@ -7,7 +7,9 @@ let seq = 0
 function contract(over: Partial<Contract> = {}): Contract {
   seq++
   return {
-    id: `c${seq}`,
+    // Contract nodes are keyed by id, so name the id after the contract
+    // to keep the expected keys in these tests readable.
+    id: over.name ?? `c${seq}`,
     name: over.name ?? `Contract ${seq}`,
     supplier: 'Acme',
     category: 'IT',

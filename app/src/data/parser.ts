@@ -86,9 +86,21 @@ export function rowsToContracts(dataRows: string[][], mapping: ColumnMapping): {
     const rowNum = i + 2 // 1-based + header
 
     const rawId = get(row, mapping, 'contract_id')
-    const id = rawId || `AUTO-${i + 1}`
-    if (rawId && seenIds.has(rawId)) {
-      issues.push({ row: rowNum, field: 'contract_id', kind: 'duplicate', detail: `Duplicate ID: ${rawId}` })
+    let id = rawId || `AUTO-${i + 1}`
+    // Ids key graph nodes, React lists and the annotation store, so a repeat
+    // would make two contracts share a row, a node and a note. Report the
+    // duplicate, then disambiguate what we actually store.
+    if (seenIds.has(id)) {
+      let n = 2
+      while (seenIds.has(`${id}#${n}`)) n++
+      const unique = `${id}#${n}`
+      if (rawId) {
+        issues.push({
+          row: rowNum, field: 'contract_id', kind: 'duplicate',
+          detail: `Duplicate ID ${rawId} — stored as ${unique} so the rows stay separate`,
+        })
+      }
+      id = unique
     }
     seenIds.add(id)
 

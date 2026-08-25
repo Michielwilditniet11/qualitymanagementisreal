@@ -1,5 +1,6 @@
 import type { Contract, GraphNode } from '../data/types'
 import { fmtK, daysDiff } from './risk'
+import { entityKey, contractKey, contractIdFromKey } from '../graph/buildGraph'
 
 export type GapKind =
   | 'no-owner' | 'no-competition' | 'single-point' | 'missing-data' | 'expiring-unplanned'
@@ -11,6 +12,12 @@ export interface Gap {
   detail: string
   /** Spend exposed by the absence. */
   exposure: number
+  /**
+   * How many contracts the gap covers. Held explicitly rather than inferred
+   * from nodeKeys, which is a graph concern: a caller with no graph would
+   * otherwise read a count of zero beside a real exposure figure.
+   */
+  contractCount: number
   /** Real nodes involved. */
   nodeKeys: string[]
   /**
@@ -37,7 +44,7 @@ function sumValue(cs: Contract[]): number {
   return cs.reduce((s, c) => s + (c.annualValue ?? 0), 0)
 }
 
-function key(type: string, name: string) { return `${type}::${name}` }
+function key(type: 'department' | 'category' | 'supplier' | 'owner', name: string) { return entityKey(type, name) }
 
 /**
  * Suppliers whose removal would disconnect spend: they are the only supplier
@@ -70,10 +77,15 @@ export function singlePointSuppliers(contracts: Contract[]): Map<string, Contrac
  * describe things that should exist and do not — the shapes a network view is
  * uniquely able to show.
  */
-export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
+export function findGaps(contracts: Contract[], nodes: GraphNode[] = []): Gap[] {
   const gaps: Gap[] = []
   if (contracts.length === 0) return gaps
-  const known = new Set(nodes.map(n => n.key))
+  // `nodes` narrows gaps to what the graph can actually show. Callers with no
+  // graph (the Calendar, the Kraljic brief) pass none, and filtering against
+  // an empty set would silently strip every key — leaving a gap that knows
+  // its own exposure but claims to touch nothing. No nodes means no filter.
+  const known = nodes.length > 0 ? new Set(nodes.map(n => n.key)) : null
+  const inGraph = (k: string) => known === null || known.has(k)
   const total = sumValue(contracts)
 
   /* Contracts with nobody accountable. */
@@ -92,7 +104,8 @@ export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
       title: `${orphans.length} contract${orphans.length === 1 ? '' : 's'} have no owner`,
       detail: `${fmtK(sumValue(orphans))} answers to nobody${worst ? `, mostly in ${worst[0]}` : ''}. Nothing in the register will chase these renewals.`,
       exposure: sumValue(orphans),
-      nodeKeys: orphans.map(c => key('contract', c.name)).filter(k => known.has(k)),
+      contractCount: orphans.length,
+      nodeKeys: orphans.map(contractKey).filter(inGraph),
       phantom: worst ? { label: 'No owner', anchorKey: key('department', worst[0]) } : undefined,
     })
   }
@@ -115,7 +128,8 @@ export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
       title: `${category} has no second supplier`,
       detail: `${fmtK(spend)} sits with ${[...suppliers][0]} and nobody else. There is no alternative to price against and none to fall back on.`,
       exposure: spend,
-      nodeKeys: [key('category', category), key('supplier', [...suppliers][0])].filter(k => known.has(k)),
+      contractCount: cs.length,
+      nodeKeys: [key('category', category), key('supplier', [...suppliers][0])].filter(inGraph),
       phantom: { label: '2nd supplier?', anchorKey: key('category', category) },
     })
   }
@@ -132,7 +146,8 @@ export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
       title: `${supplier} is a single point of failure`,
       detail: `${supplier} is the only supplier serving ${[...cells].slice(0, 3).join(', ')}${cells.size > 3 ? ` and ${cells.size - 3} more` : ''}. Losing them stops ${fmtK(spend)} of activity with no substitute in the register.`,
       exposure: spend,
-      nodeKeys: [key('supplier', supplier), ...cs.map(c => key('contract', c.name))].filter(k => known.has(k)),
+      contractCount: cs.length,
+      nodeKeys: [key('supplier', supplier), ...cs.map(contractKey)].filter(inGraph),
     })
   }
 
@@ -153,7 +168,8 @@ export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
       title: `${unplanned.length} expiring contract${unplanned.length === 1 ? '' : 's'} with no successor`,
       detail: `${fmtK(sumValue(unplanned))} lapses within 90 days and nothing in the register covers the same category and department afterwards.`,
       exposure: sumValue(unplanned),
-      nodeKeys: unplanned.map(c => key('contract', c.name)).filter(k => known.has(k)),
+      contractCount: unplanned.length,
+      nodeKeys: unplanned.map(contractKey).filter(inGraph),
     })
   }
 
@@ -168,7 +184,8 @@ export function findGaps(contracts: Contract[], nodes: GraphNode[]): Gap[] {
       title: `${holes.length} contract${holes.length === 1 ? '' : 's'} missing value or end date`,
       detail: `${noValue.length} without a value and ${noEnd.length} without an end date. Every total on every screen understates reality by an unknown margin.`,
       exposure: sumValue(holes),
-      nodeKeys: holes.map(c => key('contract', c.name)).filter(k => known.has(k)),
+      contractCount: holes.length,
+      nodeKeys: holes.map(contractKey).filter(inGraph),
     })
   }
 
@@ -181,10 +198,11 @@ export function gapExposure(gaps: Gap[], contracts: Contract[]): number {
   const flagged = new Set<string>()
   for (const g of gaps) {
     for (const k of g.nodeKeys) {
-      if (k.startsWith('contract::')) flagged.add(k.slice('contract::'.length))
+      const id = contractIdFromKey(k)
+      if (id) flagged.add(id)
     }
   }
   return contracts
-    .filter(c => flagged.has(c.name))
+    .filter(c => flagged.has(c.id))
     .reduce((s, c) => s + (c.annualValue ?? 0), 0)
 }

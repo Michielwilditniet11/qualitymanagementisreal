@@ -3,6 +3,13 @@ import { fmtK, riskScore, riskLevel } from './risk'
 import { supplierLeverage, negotiationCalendar, type SupplierLeverage, type ActionItem } from './levers'
 import { savingsOpportunities, type Opportunity } from './savings'
 import { findGaps, type Gap } from './gaps'
+import { entityKey, contractIdFromKey } from '../graph/buildGraph'
+
+/** True when a node key names a contract belonging to this category. */
+function hasOwnContract(nodeKey: string, ownIds: Set<string>): boolean {
+  const id = contractIdFromKey(nodeKey)
+  return id !== null && ownIds.has(id)
+}
 
 export type Quadrant = 'non-critical' | 'leverage' | 'bottleneck' | 'strategic'
 
@@ -54,17 +61,18 @@ export function categoryBrief(
 ): CategoryBrief {
   const own = contracts.filter(c => c.category === category)
   const ownIds = new Set(own.map(c => c.id))
-  const ownNames = new Set(own.map(c => c.name))
   const supplierNames = new Set(own.map(c => c.supplier).filter(Boolean))
 
   const suppliers = supplierLeverage(contracts, now).filter(s => supplierNames.has(s.supplier))
   const decisions = negotiationCalendar(contracts, now).filter(i => ownIds.has(i.contractId))
-  const gaps = findGaps(contracts, []).filter(g =>
-    g.id.includes(category) ||
-    g.nodeKeys.some(k => k === `category::${category}` ||
-      (k.startsWith('contract::') && ownNames.has(k.slice('contract::'.length)))))
-  const opportunities = savingsOpportunities(contracts, now).filter(o =>
-    o.title.includes(category) || o.contractIds.some(id => ownIds.has(id)))
+  // Attribute by the nodes a gap actually names, never by substring on its id:
+  // category "Telecom" would otherwise claim `gap:single-point:Telecom NL`,
+  // a gap about an unrelated supplier that merely starts with the same word.
+  const gaps = findGaps(contracts).filter(g =>
+    g.nodeKeys.some(k => k === entityKey('category', category) ||
+      hasOwnContract(k, ownIds)))
+  const opportunities = savingsOpportunities(contracts, now)
+    .filter(o => o.contractIds.some(id => ownIds.has(id)))
 
   let worst = 0
   for (const c of own) {

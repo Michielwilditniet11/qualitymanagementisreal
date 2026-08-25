@@ -291,6 +291,18 @@ export interface PartitionedRows {
  * Lead with what can still be decided. Sorting purely by end date buries the
  * actionable future beneath a wall of expired contracts.
  */
+/**
+ * Rows whose *decision date* falls within `days` — the notice deadline, not
+ * the end date. A tile labelled "decidable in 90 days" is asking when the
+ * decision closes, and `daysUntil` measures something else entirely.
+ */
+export function decidableWithin(
+  rows: TimelineRow[], days: number, now = new Date()
+): TimelineRow[] {
+  const cutoff = now.getTime() + days * DAY
+  return rows.filter(r => r.noticeDate && r.noticeDate.getTime() <= cutoff)
+}
+
 export function partitionRows(rows: TimelineRow[], now = new Date()): PartitionedRows {
   const decidable: TimelineRow[] = []
   const upcoming: TimelineRow[] = []

@@ -4,6 +4,7 @@ import { computeCentrality } from './centrality'
 import { negotiationCalendar } from './levers'
 import { findGaps } from './gaps'
 import { completeness, type LensId } from './lenses'
+import { contractKey } from '../graph/buildGraph'
 
 export interface BriefingItem {
   /** What was found, in one clause. */
@@ -25,7 +26,6 @@ export interface LensBriefing {
   badge?: number
 }
 
-const KEY = (type: string, name: string) => `${type}::${name}`
 
 function sumValue(cs: Contract[]): number {
   return cs.reduce((s, c) => s + (c.annualValue ?? 0), 0)
@@ -81,7 +81,7 @@ export function lensBriefing(
         items: cal.slice(0, 3).map(i => ({
           label: `${i.contract} — act by ${i.actBy.toISOString().slice(0, 10)}`,
           figure: `${i.daysLeft}d · ${fmtK(i.value)}`,
-          nodeKeys: [KEY('contract', i.contract)],
+          nodeKeys: [contractKey({ id: i.contractId })],
         })),
         badge: cal.length,
       }
@@ -157,7 +157,7 @@ export function lensBriefing(
         items.push({
           label: `${expiringSoon.length} expiring within 90 days`,
           figure: fmtK(sumValue(expiringSoon)),
-          nodeKeys: expiringSoon.map(c => KEY('contract', c.name)),
+          nodeKeys: expiringSoon.map(contractKey),
         })
       }
       return {

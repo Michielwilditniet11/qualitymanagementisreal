@@ -1,5 +1,6 @@
-import type { Contract, GraphNode } from '../data/types'
+import type { Contract } from '../data/types'
 import { fmtK, daysDiff } from './risk'
+import { entityKey, contractKey, contractIdFromKey } from '../graph/buildGraph'
 
 export type InsightSeverity = 'critical' | 'warning' | 'info'
 export type InsightCategory =
@@ -18,8 +19,8 @@ export interface Insight {
 
 const SEVERITY_RANK: Record<InsightSeverity, number> = { critical: 0, warning: 1, info: 2 }
 
-function keyOf(type: GraphNode['type'], name: string) {
-  return `${type}::${name}`
+function keyOf(type: 'department' | 'category' | 'supplier' | 'owner', name: string) {
+  return entityKey(type, name)
 }
 
 function sumValue(contracts: Contract[]): number {
@@ -62,7 +63,7 @@ export function detectSystemicSuppliers(contracts: Contract[]): Insight[] {
       title: `${supplier} is a systemic dependency`,
       narrative: `${supplier} holds ${cs.length} contract${cs.length === 1 ? '' : 's'} worth ${fmtK(spend)} (${Math.round(share * 100)}% of total spend) across ${depts.size} department${depts.size === 1 ? '' : 's'}.`,
       valueAtRisk: spend,
-      nodeKeys: [keyOf('supplier', supplier), ...cs.map(c => keyOf('contract', c.name))],
+      nodeKeys: [keyOf('supplier', supplier), ...cs.map(contractKey)],
       action: 'Review continuity plans and consider a secondary source.',
     })
   }
@@ -113,7 +114,7 @@ export function detectExpiryCliffs(contracts: Contract[]): Insight[] {
       title: `${department} faces an expiry cliff`,
       narrative: `${Math.round(share * 100)}% of ${department}'s spend (${fmtK(atRisk)} across ${expiring.length} contract${expiring.length === 1 ? '' : 's'}) expires within 90 days.`,
       valueAtRisk: atRisk,
-      nodeKeys: [keyOf('department', department), ...expiring.map(c => keyOf('contract', c.name))],
+      nodeKeys: [keyOf('department', department), ...expiring.map(contractKey)],
       action: 'Start renewal negotiations now to preserve leverage.',
     })
   }
@@ -136,7 +137,7 @@ export function detectSilentRenewals(contracts: Contract[]): Insight[] {
     title: `${at.length} contract${at.length === 1 ? '' : 's'} about to auto-renew`,
     narrative: `${fmtK(spend)} of spend will roll over automatically unless notice is served within 30 days. Once the notice window closes the term is locked for another cycle.`,
     valueAtRisk: spend,
-    nodeKeys: at.map(c => keyOf('contract', c.name)),
+    nodeKeys: at.map(contractKey),
     action: 'Decide renew-or-exit before the notice deadline.',
   }]
 }
@@ -159,7 +160,7 @@ export function detectOwnerOverload(contracts: Contract[]): Insight[] {
       title: `${owner} is a key-person risk`,
       narrative: `${owner} owns ${cs.length} contracts worth ${fmtK(spend)} (${Math.round(share * 100)}% of the portfolio) across ${depts.size} department${depts.size === 1 ? '' : 's'}.`,
       valueAtRisk: spend,
-      nodeKeys: [keyOf('owner', owner), ...cs.map(c => keyOf('contract', c.name))],
+      nodeKeys: [keyOf('owner', owner), ...cs.map(contractKey)],
       action: 'Spread ownership or document a deputy for continuity.',
     })
   }
@@ -181,7 +182,7 @@ export function detectOrphanSpend(contracts: Contract[]): Insight[] {
     title: `${orphans.length} contract${orphans.length === 1 ? '' : 's'} have no owner`,
     narrative: `${fmtK(spend)} of spend (${Math.round(share * 100)}%) has nobody accountable${worst ? `, concentrated in ${worst[0]}` : ''}. Unowned contracts renew and lapse unnoticed.`,
     valueAtRisk: spend,
-    nodeKeys: orphans.map(c => keyOf('contract', c.name)),
+    nodeKeys: orphans.map(contractKey),
     action: 'Assign an owner to every contract above the materiality threshold.',
   }]
 }
@@ -243,7 +244,7 @@ export function detectExpiredActive(contracts: Contract[]): Insight[] {
     title: `${expired.length} contract${expired.length === 1 ? '' : 's'} already expired`,
     narrative: `${fmtK(spend)} of spend sits on contracts past their end date. Either the register is stale or the organisation is buying without a valid agreement.`,
     valueAtRisk: spend,
-    nodeKeys: expired.map(c => keyOf('contract', c.name)),
+    nodeKeys: expired.map(contractKey),
     action: 'Confirm whether these are still live and close or renew them.',
   }]
 }
@@ -270,7 +271,7 @@ export function detectDataConfidence(contracts: Contract[]): Insight[] {
     category: 'data',
     title: `Data completeness is ${pct}%`,
     narrative: `${100 - pct}% of key fields are blank across ${contracts.length} contracts${missingValue.length ? `, including ${missingValue.length} with no annual value` : ''}. Spend and risk figures understate reality by an unknown margin.`,
-    nodeKeys: missingValue.map(c => keyOf('contract', c.name)),
+    nodeKeys: missingValue.map(contractKey),
     action: 'Close the gaps before using these figures in board reporting.',
   }]
 }
@@ -307,14 +308,15 @@ export function totalValueAtRisk(insights: Insight[], contracts: Contract[]): nu
   for (const i of insights) {
     if (i.severity !== 'critical') continue
     for (const k of i.nodeKeys) {
-      if (k.startsWith('contract::')) flagged.add(k.slice('contract::'.length))
+      const id = contractIdFromKey(k)
+      if (id) flagged.add(id)
     }
   }
   if (flagged.size === 0) return 0
   const counted = new Set<string>()
   let total = 0
   for (const c of contracts) {
-    if (!flagged.has(c.name) || counted.has(c.id)) continue
+    if (!flagged.has(c.id) || counted.has(c.id)) continue
     counted.add(c.id)
     total += c.annualValue ?? 0
   }

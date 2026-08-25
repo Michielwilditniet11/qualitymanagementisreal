@@ -1,5 +1,5 @@
 import type { Contract, GraphNode, GraphLink } from '../data/types'
-import { NODE_COLORS } from '../graph/buildGraph'
+import { NODE_COLORS, entityKey, contractKey, contractIdFromKey } from '../graph/buildGraph'
 import { fmtK } from './risk'
 import type { LensId } from './lenses'
 import type { BriefingItem } from './briefings'
@@ -186,7 +186,7 @@ function legendFor(memberKeys: string[], nodes: GraphNode[]): { color: string; m
   return [...types].map(t => ({ color: NODE_COLORS[t] ?? '#94A3B8', meaning: MEANING[t] ?? t }))
 }
 
-const KEY = (type: string, name: string) => `${type}::${name}`
+const KEY = entityKey
 
 /** Seeds and framing text for each source kind. */
 function seedsFor(
@@ -246,7 +246,7 @@ function seedsFor(
           title: `${soon.length} contracts expire within 90 days`,
           figure: fmtK(sumValue(soon)),
           caption: 'Each expiring contract with the department, category and supplier it would leave behind.',
-          seeds: soon.map(c => KEY('contract', c.name)), lens: 'expiry',
+          seeds: soon.map(contractKey), lens: 'expiry',
           crossLinks: [{ label: 'Open in Calendar', target: 'calendar' as const }],
         }
       }
@@ -257,18 +257,18 @@ function seedsFor(
           title: 'The ten largest contracts',
           figure: fmtK(sumValue(top)),
           caption: 'Where the money actually sits, and who it flows through.',
-          seeds: top.map(c => KEY('contract', c.name)), lens: 'spend', crossLinks: [],
+          seeds: top.map(contractKey), lens: 'spend', crossLinks: [],
         }
       }
       if (m === 'atRisk') {
         const critical = generateInsights(contracts).filter(i => i.severity === 'critical')
         const seeds = [...new Set(critical.flatMap(i => i.nodeKeys))]
         const flagged = new Set(critical.flatMap(i => i.nodeKeys)
-          .filter(k => k.startsWith('contract::')).map(k => k.slice('contract::'.length)))
+          .map(contractIdFromKey).filter(Boolean) as string[])
         return {
           id: 'kpi:atRisk',
           title: `${critical.length} critical findings`,
-          figure: fmtK(sumValue(contracts.filter(c => flagged.has(c.name)))),
+          figure: fmtK(sumValue(contracts.filter(c => flagged.has(c.id)))),
           caption: 'Every contract and entity carrying a critical finding, with what they run through.',
           seeds, lens: 'risk',
           crossLinks: [{ label: 'Open in Diagnostics', target: 'diagnostics' as const }],
@@ -282,7 +282,7 @@ function seedsFor(
           title: `${open.length} notice windows still open`,
           figure: fmtK(open.reduce((s, i) => s + i.value, 0)),
           caption: 'Contracts you can still act on before the decision date passes, and who they sit with.',
-          seeds: open.map(i => KEY('contract', i.contract)), lens: 'expiry',
+          seeds: open.map(i => contractKey({ id: i.contractId })), lens: 'expiry',
           crossLinks: [{ label: 'Open in Calendar', target: 'calendar' as const }],
         }
       }

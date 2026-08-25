@@ -35,13 +35,35 @@ export const RELATION_LABELS: Record<RelationType, string> = {
   'contract-of': 'contract',
 }
 
+/**
+ * Node keys. Entities are identified by name because that *is* their
+ * identity — two departments called "IT" are one department. Contracts are
+ * identified by id, because two contracts can legitimately share a name and
+ * keying them by it silently merges them into one node, hiding a whole
+ * agreement. Every producer of a nodeKey must go through these.
+ */
+export function entityKey(type: 'department' | 'category' | 'supplier' | 'owner', name: string): string {
+  return `${type}::${name}`
+}
+
+export function contractKey(c: { id: string }): string {
+  return `contract::${c.id}`
+}
+
+export const CONTRACT_PREFIX = 'contract::'
+
+/** The contract id inside a contract node key, or null for any other key. */
+export function contractIdFromKey(key: string): string | null {
+  return key.startsWith(CONTRACT_PREFIX) ? key.slice(CONTRACT_PREFIX.length) : null
+}
+
 export function buildGraph(contracts: Contract[], w: number, h: number): { nodes: GraphNode[]; links: GraphLink[] } {
   const nodeById = new Map<string, GraphNode>()
   const linkSet = new Set<string>()
   const links: GraphLink[] = []
 
-  function getNode(type: GraphNode['type'], name: string): GraphNode {
-    const key = `${type}::${name}`
+  function getNode(type: GraphNode['type'], name: string, keyOverride?: string): GraphNode {
+    const key = keyOverride ?? `${type}::${name}`
     let n = nodeById.get(key)
     if (!n) {
       n = {
@@ -68,7 +90,7 @@ export function buildGraph(contracts: Contract[], w: number, h: number): { nodes
   }
 
   for (const c of contracts) {
-    const nc = getNode('contract', c.name)
+    const nc = getNode('contract', c.name, contractKey(c))
     nc.contract = c
     const nd = getNode('department', c.department)
     const ncat = getNode('category', c.category)
