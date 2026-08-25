@@ -12,6 +12,7 @@ import { computeCentrality, assessImpact } from '../../analytics/centrality'
 import { findGaps, gapExposure, type Gap } from '../../analytics/gaps'
 import { buildStory, type StoryStep } from '../../analytics/story'
 import { negotiationCalendar } from '../../analytics/levers'
+import { lensBriefing, lensBadges } from '../../analytics/briefings'
 import { T, Tick, TerminalSelect } from '../../ui'
 
 /* Terminal tokens live in src/ui/theme; re-exported so existing imports of
@@ -19,6 +20,36 @@ import { T, Tick, TerminalSelect } from '../../ui'
 export { T }
 
 type RiskFilter = 'all' | 'high' | 'medium+'
+
+/** First-run guidance, anchored near the UI each step describes. */
+const COACH = [
+  {
+    title: 'This is your contract network',
+    body: 'Every dot is a contract, supplier, category, department or owner. Hover to feel the connections, click to have a node explain itself, double-click to isolate it.',
+    pos: { top: '38%', left: '30%' },
+  },
+  {
+    title: 'Lenses answer one question each',
+    body: 'Each lens recolours the whole map for a single question, and the number on a tab tells you how much it found here. The strip beneath names the top three.',
+    pos: { top: '96px', left: '24px' },
+  },
+  {
+    title: 'PRESENT walks a room through it',
+    body: 'Turns this data into a narrated fly-through — the money, the dependencies, the risks, the gaps, and what to do next. Arrow keys step through it.',
+    pos: { top: '58px', right: '24px' },
+  },
+] as const
+
+const SHORTCUTS: [string, string][] = [
+  ['1–7', 'switch lens'],
+  ['F', 'fit everything'],
+  ['S', 'spotlight'],
+  ['Esc', 'clear selection / exit'],
+  ['Alt ←', 'back'],
+  ['?', 'this sheet'],
+  ['← →', 'story steps'],
+  ['dbl-click', 'focus a node'],
+]
 
 export default function WebScreen() {
   const contracts = useDataStore(s => s.getContracts())
@@ -38,11 +69,16 @@ export default function WebScreen() {
   const [story, setStory] = useState<StoryStep[] | null>(null)
   const [storyIdx, setStoryIdx] = useState(0)
   const handleRef = useRef<WebHandle | null>(null)
+  const [briefingOpen, setBriefingOpen] = useState(true)
+  const [coachStep, setCoachStep] = useState(0)
+  const [showKeys, setShowKeys] = useState(false)
 
   const { nodes, links } = useMemo(() => buildGraph(contracts, 900, 600), [contracts])
   const insights = useMemo(() => generateInsights(contracts), [contracts])
   const gaps = useMemo(() => findGaps(contracts, nodes), [contracts, nodes])
   const calendar = useMemo(() => negotiationCalendar(contracts), [contracts])
+  const briefing = useMemo(() => lensBriefing(lens, contracts, nodes), [lens, contracts, nodes])
+  const badges = useMemo(() => lensBadges(contracts, nodes), [contracts, nodes])
 
   /* ─── Selection with history ─── */
   const historyRef = useRef<GraphNode[]>([])
@@ -165,6 +201,7 @@ export default function WebScreen() {
       const li = parseInt(e.key)
       if (li >= 1 && li <= LENSES.length) setLens(LENSES[li - 1].id)
       else if (e.key === 's' || e.key === 'S') setSpotlight(v => !v)
+      else if (e.key === '?') setShowKeys(v => !v)
       else if (e.key === 'ArrowLeft' && e.altKey) goBack()
     }
     window.addEventListener('keydown', onKey)
@@ -237,7 +274,7 @@ export default function WebScreen() {
   return (
     <div className="flex-1 flex min-h-0" style={{ background: T.ground }}>
       {/* Canvas area */}
-      <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden" onClick={handleLegendChange as any}>
+      <div className="flex-1 flex flex-col min-h-0 min-w-0 overflow-hidden relative" onClick={handleLegendChange as any}>
 
         {/* ─── Ticker strip ─── */}
         {!story && (
@@ -274,6 +311,11 @@ export default function WebScreen() {
                     fontWeight: lens === l.id ? 700 : 400,
                   }}>
                   {l.label.toUpperCase()}
+                  {badges[l.id] !== undefined && badges[l.id]! > 0 && (
+                    <span className="ml-1 tabular-nums" style={{ fontSize: '9px', opacity: 0.65 }}>
+                      {badges[l.id]}
+                    </span>
+                  )}
                 </button>
               ))}
             </div>
@@ -385,6 +427,43 @@ export default function WebScreen() {
           </div>
         )}
 
+        {/* ─── Lens briefing: what this lens found in this dataset ─── */}
+        {!story && briefingOpen && briefing.items.length > 0 && (
+          <div className="flex items-start gap-3 px-3 py-1.5 flex-shrink-0"
+            style={{ background: T.ground, borderBottom: `1px solid ${T.hairline}` }}>
+            <div className="flex-shrink-0" style={{ width: '190px' }}>
+              <div className="text-[9px] tracking-[0.18em]" style={{ color: T.cyan, fontFamily: T.mono }}>
+                {briefing.question.toUpperCase()}
+              </div>
+              <div className="text-[9px] mt-0.5 leading-snug" style={{ color: T.muted }}>
+                {briefing.scaleNote}
+              </div>
+            </div>
+            <div className="flex-1 flex gap-2 flex-wrap min-w-0">
+              {briefing.items.map((it, i) => (
+                <button key={i}
+                  onClick={() => it.nodeKeys.length && handleRef.current?.frame(it.nodeKeys)}
+                  className="flex items-baseline gap-2 px-2 py-1 text-left cursor-pointer transition-colors hover:brightness-150 min-w-0"
+                  style={{ background: T.panel, border: `1px solid ${T.hairline}`, maxWidth: '340px' }}>
+                  <span className="text-[10px] truncate" style={{ color: T.dim }}>{it.label}</span>
+                  <span className="text-[10px] tabular-nums flex-shrink-0 font-semibold"
+                    style={{ color: T.amber, fontFamily: T.mono }}>{it.figure}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setBriefingOpen(false)} aria-label="Hide lens briefing"
+              className="flex-shrink-0 text-[9px] tracking-wider cursor-pointer px-1"
+              style={{ color: T.faint, fontFamily: T.mono }}>HIDE</button>
+          </div>
+        )}
+        {!story && !briefingOpen && (
+          <button onClick={() => setBriefingOpen(true)}
+            className="px-3 py-0.5 text-[9px] tracking-wider text-left cursor-pointer flex-shrink-0"
+            style={{ color: T.faint, fontFamily: T.mono, background: T.ground, borderBottom: `1px solid ${T.hairline}` }}>
+            SHOW WHAT THIS LENS FOUND ▾
+          </button>
+        )}
+
         <PlanetaryWeb
           nodes={nodes} links={links}
           visibleTypes={visibleTypes} selected={selected}
@@ -402,6 +481,51 @@ export default function WebScreen() {
           chromeless={Boolean(story)}
           onReady={h => { handleRef.current = h }}
         />
+
+        {/* ─── First-run coach marks ─── */}
+        {!story && coachStep < COACH.length && (
+          <div className="absolute inset-0 z-30" style={{ background: 'rgba(4,7,14,0.55)' }}
+            onClick={() => setCoachStep(i => i + 1)}>
+            <div className="absolute rounded-sm p-3 max-w-xs"
+              style={{
+                ...COACH[coachStep].pos,
+                background: T.ground, border: `1px solid ${T.cyan}`,
+                boxShadow: '0 0 24px rgba(47,211,230,0.25)',
+              }}>
+              <div className="text-[9px] tracking-[0.18em] mb-1" style={{ color: T.cyan, fontFamily: T.mono }}>
+                {coachStep + 1} / {COACH.length}
+              </div>
+              <div className="text-[12px] font-semibold text-white mb-1">{COACH[coachStep].title}</div>
+              <div className="text-[11px] leading-relaxed" style={{ color: T.dim }}>{COACH[coachStep].body}</div>
+              <div className="text-[9px] mt-2 tracking-wider" style={{ color: T.muted, fontFamily: T.mono }}>
+                CLICK TO CONTINUE · ? REOPENS
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ─── Shortcut sheet ─── */}
+        {showKeys && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center"
+            style={{ background: 'rgba(4,7,14,0.85)' }} onClick={() => setShowKeys(false)}>
+            <div className="p-5 rounded-sm" style={{ background: T.ground, border: `1px solid ${T.hairline}` }}>
+              <div className="text-[10px] tracking-[0.18em] mb-3" style={{ color: T.cyan, fontFamily: T.mono }}>
+                KEYBOARD
+              </div>
+              <div className="grid grid-cols-2 gap-x-8 gap-y-1">
+                {SHORTCUTS.map(([k, d]) => (
+                  <div key={k} className="flex items-baseline gap-3 text-[10px]" style={{ fontFamily: T.mono }}>
+                    <span className="px-1.5 tabular-nums" style={{ color: T.amber, border: `1px solid ${T.hairline}` }}>{k}</span>
+                    <span style={{ color: T.dim }}>{d}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="text-[9px] mt-3 tracking-wider" style={{ color: T.muted, fontFamily: T.mono }}>
+                ESC OR CLICK TO CLOSE
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ─── Story overlay ─── */}
         {story && storyStep && (

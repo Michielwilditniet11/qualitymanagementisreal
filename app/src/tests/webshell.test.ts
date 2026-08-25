@@ -531,3 +531,73 @@ describe('scale', () => {
     expect(gaps.length).toBeGreaterThan(0)
   })
 })
+
+/* ─────────────── Lens briefings (UX3) ─────────────── */
+
+import { lensBriefing, lensBadges } from '../analytics/briefings'
+import { computeCentrality as centrality } from '../analytics/centrality'
+
+describe('lensBriefing', () => {
+  const cs = [
+    contract({ name: 'Big', supplier: 'BigCo', department: 'IT', category: 'Cloud', annualValue: 900_000, endDate: inDays(120), noticePeriodDays: 30 }),
+    contract({ name: 'Mid', supplier: 'BigCo', department: 'HR', category: 'People', annualValue: 200_000, endDate: inDays(-30) }),
+    contract({ name: 'Bare', supplier: 'Tiny', department: 'IT', category: 'Cloud', annualValue: 1_000, owner: undefined }),
+  ]
+  const { nodes: gn } = buildGraph(cs, 900, 600)
+
+  it('gives every lens a question, a scale note and at most three items', () => {
+    for (const lens of ['structure', 'spend', 'risk', 'expiry', 'concentration', 'gaps', 'data'] as const) {
+      const b = lensBriefing(lens, cs, gn)
+      expect(b.question.length).toBeGreaterThan(5)
+      expect(b.scaleNote.length).toBeGreaterThan(10)
+      expect(b.items.length).toBeLessThanOrEqual(3)
+    }
+  })
+
+  it('takes spend figures straight from centrality', () => {
+    const b = lensBriefing('spend', cs, gn)
+    const top = centrality(gn, 'supplier')[0]
+    expect(b.items[0].label).toBe(top.name)
+    expect(b.items[0].figure).toBe(fmtK(top.weightedDegree))
+  })
+
+  it('names the gaps the gap engine found', () => {
+    const b = lensBriefing('gaps', cs, gn)
+    const gaps = findGaps(cs, gn)
+    expect(b.badge).toBe(gaps.length)
+    if (gaps.length) expect(b.items[0].label).toBe(gaps[0].title)
+  })
+
+  it('points expiry at open notice windows only', () => {
+    const b = lensBriefing('expiry', cs, gn)
+    for (const i of b.items) expect(i.label).toContain('act by')
+  })
+
+  it('gives every item nodes to frame, or none at all', () => {
+    for (const lens of ['spend', 'risk', 'expiry', 'concentration', 'gaps', 'data'] as const) {
+      for (const i of lensBriefing(lens, cs, gn).items) {
+        expect(Array.isArray(i.nodeKeys)).toBe(true)
+      }
+    }
+  })
+
+  it('survives an empty portfolio', () => {
+    for (const lens of ['structure', 'spend', 'risk', 'expiry', 'concentration', 'gaps', 'data'] as const) {
+      expect(() => lensBriefing(lens, [], [])).not.toThrow()
+    }
+  })
+})
+
+describe('lensBadges', () => {
+  it('counts signal per lens', () => {
+    const cs = [
+      contract({ name: 'R', endDate: inDays(-10), owner: undefined }),
+      contract({ name: 'S', endDate: inDays(400) }),
+    ]
+    const { nodes: gn } = buildGraph(cs, 900, 600)
+    const b = lensBadges(cs, gn)
+    expect(b.risk).toBeGreaterThan(0)
+    expect(b.gaps).toBeGreaterThan(0)
+    expect(b.spend).toBeGreaterThan(0)
+  })
+})
