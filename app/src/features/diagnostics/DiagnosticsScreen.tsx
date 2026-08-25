@@ -66,7 +66,8 @@ export default function DiagnosticsScreen() {
   }
 
   const jump = useCallback((id: string) => {
-    sectionRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    sectionRefs.current[id]?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
     setActive(id)
   }, [])
 

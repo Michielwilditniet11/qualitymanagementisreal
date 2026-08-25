@@ -1,1 +1,21 @@
 @import "tailwindcss";
+
+/* ─── Accessibility (UX6) ─── */
+
+/* Every interactive element gets a visible keyboard focus ring. Mouse users
+   never see it; keyboard users always do. */
+:focus-visible {
+  outline: 2px solid #2FD3E6;
+  outline-offset: 1px;
+}
+
+/* Respect the OS motion preference across the whole app: transitions and
+   animations collapse rather than being merely faster. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

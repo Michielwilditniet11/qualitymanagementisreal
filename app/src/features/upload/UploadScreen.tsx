@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { parseFile, parseCSVText, guessMapping, buildDataset, TARGET_FIELDS, FIELD_LABELS } from '../../data/parser'
 import { SAMPLE_CSV } from '../../data/sample'
+import { T } from '../../ui'
 import { useDataStore } from '../../store/dataStore'
 import { useUIStore } from '../../store/uiStore'
 import type { ColumnMapping } from '../../data/types'
@@ -82,7 +83,7 @@ export default function UploadScreen() {
             onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
         </div>
         <div className="flex flex-col gap-3">
-          <button onClick={loadSample} className="bg-[#1d2639] border border-[#2a3650] text-[#8fa0bd] px-5 py-3 rounded-lg hover:text-white transition text-sm">
+          <button onClick={loadSample} className="px-4 py-2.5 rounded-sm text-[11px] tracking-wider transition-colors hover:brightness-125">
             Load sample dataset
           </button>
         </div>
@@ -92,7 +93,7 @@ export default function UploadScreen() {
 
       {headers.length > 0 && (
         <>
-          <div className="bg-[#171e2e] border border-[#2a3650] rounded-xl p-5 mb-6">
+          <div className="rounded-sm bg-[#080D18] border border-[#16233A] p-5 mb-6">
             <h3 className="font-semibold mb-1">Column mapping</h3>
             <p className="text-[#8fa0bd] text-xs mb-4">{mappedCount} of {TARGET_FIELDS.length} fields mapped · {rows.length} data rows detected</p>
             <div className="grid grid-cols-2 gap-3">
@@ -102,7 +103,7 @@ export default function UploadScreen() {
                   <select
                     value={mapping[field] ?? -1}
                     onChange={e => updateMapping(field, parseInt(e.target.value))}
-                    className="flex-1 bg-[#0f1420] border border-[#2a3650] rounded-lg px-2 py-1.5 text-sm text-white"
+                    className="flex-1 rounded-sm px-2 py-1 text-[11px]" style={{ background: "#04070E", border: "1px solid #16233A", color: "#E6EDF6"}} data-x=""
                   >
                     <option value={-1}>— not mapped —</option>
                     {headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
@@ -113,7 +114,7 @@ export default function UploadScreen() {
           </div>
 
           {/* Preview */}
-          <div className="bg-[#171e2e] border border-[#2a3650] rounded-xl p-5 mb-6 overflow-x-auto">
+          <div className="rounded-sm bg-[#080D18] border border-[#16233A] p-5 mb-6 overflow-x-auto">
             <h3 className="font-semibold mb-3">Preview (first 10 rows)</h3>
             <table className="w-full text-xs">
               <thead>
@@ -136,7 +137,8 @@ export default function UploadScreen() {
             </table>
           </div>
 
-          <button onClick={handleImport} className="bg-[#4da3ff] text-[#08101f] font-semibold px-6 py-3 rounded-xl hover:brightness-110 transition text-sm">
+          <button onClick={handleImport} className="font-semibold px-5 py-2.5 rounded-sm text-[11px] tracking-wider hover:brightness-110 transition"
+            style={{ background: T.cyan, color: T.ground, fontFamily: T.mono }}>
             Import {rows.length} contracts →
           </button>
         </>

@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useDataStore } from '../../store/dataStore'
 import { portfolioSummary, computeStatsByField } from '../../data/metrics'
+import { T, SectionLabel } from '../../ui'
 
 function fmtMoney(v: number) { return '€' + Math.round(v).toLocaleString('en-US') }
 
@@ -87,26 +88,28 @@ ${upcomingRenewals.map(c => `<tr><td>${c.endDate!.toISOString().slice(0, 10)}</t
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto">
-      <h2 className="text-xl font-bold mb-1">Reports & export</h2>
-      <p className="text-[#8fa0bd] text-sm mb-6">Generate printable reports or export enriched data.</p>
+    <div className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto" style={{ background: T.ground }}>
+      <h2 className="text-base font-bold mb-1">Reports & export</h2>
+      <p className="text-xs mb-5" style={{ color: T.muted }}>Generate printable reports or export enriched data.</p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
-        <div className="bg-[#171e2e] border border-[#2a3650] rounded-xl p-5 cursor-pointer hover:border-[#4da3ff] transition" onClick={printReport}>
-          <div className="text-2xl mb-2">📊</div>
-          <h3 className="font-semibold mb-1">Full portfolio report</h3>
-          <p className="text-xs text-[#8fa0bd]">Executive summary, top risks, per-department analysis, and renewal list for the next 12 months. Opens as a print-ready page.</p>
+        <div className="rounded-sm p-4 cursor-pointer transition-colors hover:brightness-125"
+          style={{ background: T.panel, border: `1px solid ${T.hairline}` }} onClick={printReport}>
+          <SectionLabel color={T.cyan}>PRINT</SectionLabel>
+          <h3 className="font-semibold text-sm mt-1 mb-1">Full portfolio report</h3>
+          <p className="text-[11px]" style={{ color: T.muted }}>Executive summary, top risks, per-department analysis, and renewal list for the next 12 months. Opens as a print-ready page.</p>
         </div>
-        <div className="bg-[#171e2e] border border-[#2a3650] rounded-xl p-5 cursor-pointer hover:border-[#4da3ff] transition" onClick={exportCSV}>
-          <div className="text-2xl mb-2">📁</div>
-          <h3 className="font-semibold mb-1">Export enriched CSV</h3>
-          <p className="text-xs text-[#8fa0bd]">Download the normalized dataset including your annotations, ready to import into Excel or share with colleagues.</p>
+        <div className="rounded-sm p-4 cursor-pointer transition-colors hover:brightness-125"
+          style={{ background: T.panel, border: `1px solid ${T.hairline}` }} onClick={exportCSV}>
+          <SectionLabel color={T.cyan}>EXPORT</SectionLabel>
+          <h3 className="font-semibold text-sm mt-1 mb-1">Export enriched CSV</h3>
+          <p className="text-[11px]" style={{ color: T.muted }}>Download the normalized dataset including your annotations, ready to import into Excel or share with colleagues.</p>
         </div>
       </div>
 
       {/* Annotation management */}
-      <h3 className="font-semibold mb-3">Contract annotations</h3>
-      <p className="text-xs text-[#8fa0bd] mb-3">Add notes and action statuses to individual contracts. These persist in your browser and are included in exports.</p>
+      <h3 className="font-semibold text-sm mb-2">Contract annotations</h3>
+      <p className="text-[11px] mb-3" style={{ color: T.muted }}>Add notes and action statuses to individual contracts. They are included in exports, and last for this session — saved storage arrives with persistence.</p>
       <div className="space-y-2 max-h-96 overflow-y-auto">
         {contracts.map(c => <AnnotationRow key={c.id} contract={c} />)}
       </div>
@@ -121,15 +124,17 @@ function AnnotationRow({ contract: c }: { contract: Contract }) {
   const setAnnotation = useDataStore(s => s.setAnnotation)
 
   return (
-    <div className="bg-[#171e2e] border border-[#2a3650] rounded-lg p-3 flex items-center gap-3">
+    <div className="rounded-sm p-2.5 flex items-center gap-3"
+      style={{ background: T.panel, border: `1px solid ${T.hairline}` }}>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium truncate">{c.name}</div>
-        <div className="text-xs text-[#8fa0bd]">{c.supplier} · {c.department}</div>
+        <div className="text-[10px]" style={{ color: T.muted, fontFamily: T.mono }}>{c.supplier} · {c.department}</div>
       </div>
       <select
         value={annotation?.status ?? ''}
         onChange={e => setAnnotation({ contractId: c.id, note: annotation?.note ?? '', status: e.target.value as any })}
-        className="bg-[#0f1420] border border-[#2a3650] rounded px-2 py-1 text-xs text-white w-28"
+        className="rounded-sm px-2 py-1 text-[11px] w-28"
+        style={{ background: T.ground, border: `1px solid ${T.hairline}`, color: T.text, fontFamily: T.mono }}
       >
         <option value="">No status</option>
         <option value="ok">OK</option>
@@ -141,7 +146,8 @@ function AnnotationRow({ contract: c }: { contract: Contract }) {
         type="text" placeholder="Add note…"
         value={annotation?.note ?? ''}
         onChange={e => setAnnotation({ contractId: c.id, note: e.target.value, status: annotation?.status ?? '' })}
-        className="bg-[#0f1420] border border-[#2a3650] rounded px-2 py-1 text-xs text-white w-40"
+        className="rounded-sm px-2 py-1 text-[11px] w-40"
+        style={{ background: T.ground, border: `1px solid ${T.hairline}`, color: T.text }}
       />
     </div>
   )

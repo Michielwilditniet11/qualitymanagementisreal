@@ -3,6 +3,20 @@
 The Spider Web is a navigable dashboard over the contract network, styled as a
 terminal: a data ticker on top, mono-set figures, one lens active at a time.
 
+
+## How the tabs fit together
+
+| Tab | What it answers | How to work it |
+|---|---|---|
+| **Web** | What is connected, and where is the signal? | Pick a lens; its briefing names the top three things it found here. Hover to feel the graph, click to have a node explain itself, double-click to isolate. PRESENT narrates the whole portfolio. |
+| **Diagnostics** | What should I do, with whom, by when? | Use the sub-nav rail. OVERVIEW composes the rest; ACT and AUDIT are sortable tables that jump into the Calendar and the Web. |
+| **Calendar** | What can I still decide, and when does it close? | Leads with decidable deadlines; overdue collapses into a band. Scroll to zoom, drag to pan, click a month bar to zoom to it. |
+| **Kraljic** | What is my strategy per category? | Click a dot for a brief assembled from the engines, with a playbook naming real suppliers and dates. Drag a dot to override its position. |
+| **Reports** | What do I circulate? | Print report and enriched CSV export. |
+
+Every entity name in every tab links into the Web with that node selected.
+Press `?` on the Web tab for the full keyboard sheet.
+
 ## Reading the map
 
 - The default view is **fully labelled**: an importance-ranked label engine
