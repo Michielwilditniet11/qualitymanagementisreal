@@ -8,6 +8,7 @@ import { riskScore, riskLevel, RISK_COLORS, fmtK } from '../analytics/risk'
 import { lensStyle, buildLensContext, LENSES, type LensId } from '../analytics/lenses'
 import { egoNetwork } from '../analytics/centrality'
 import { selectionContext, type ContextTier } from '../analytics/selection'
+import { linkId, frameMembers, type FocusFrame } from '../analytics/focusFrame'
 import type { Gap } from '../analytics/gaps'
 import { labelPlan, type ScreenNode, type LabelLevel } from './lib/labelPolicy'
 import {
@@ -31,6 +32,17 @@ const BG = '#04070E'
 export const LABEL_PLAN_HZ = 6
 /** Dimmed nodes keep this much presence so the whole stays an orientation aid. */
 export const DIM_OPACITY = 0.3
+/**
+ * A frame is a deliberate act of attention, so its dim goes far deeper than a
+ * selection's: the frame must read as *the* picture, not as a highlight.
+ */
+export const FRAME_DIM_OPACITY = 0.07
+/**
+ * Below this the camera has not visibly responded, and the click reads as a
+ * no-op — so the seeds pulse instead. No activation may ever be silent.
+ */
+export const CAMERA_NOOP_DISTANCE = 24
+export const PULSE_MS = 620
 const MINIMAP_SIZE = 168
 
 export interface WebHandle {
@@ -50,6 +62,11 @@ interface Props {
   highlightExpiring: number
   lens: LensId
   highlightKeys?: Set<string> | null
+  /**
+   * The active Focus Frame — the induced subgraph behind every jump into the
+   * web. Supersedes `highlightKeys`, which remains for story mode.
+   */
+  focusFrame?: FocusFrame | null
   focusNode?: GraphNode | null
   onFocus?: (n: GraphNode | null) => void
   /** Structural gaps, rendered as phantom nodes under the Gaps lens. */
@@ -89,7 +106,7 @@ interface FGLink {
 export default function PlanetaryWeb(props: Props) {
   const {
     nodes, links, visibleTypes, selected, onSelect, searchQuery, spendThreshold,
-    highlightExpiring, lens, highlightKeys, focusNode, onFocus, gaps,
+    highlightExpiring, lens, highlightKeys, focusFrame, focusNode, onFocus, gaps,
     hiddenKeys, spotlight, chromeless, onReady, onHover,
   } = props
 
@@ -102,6 +119,8 @@ export default function PlanetaryWeb(props: Props) {
   const [hovered, setHovered] = useState<GraphNode | null>(null)
   const [minimap, setMinimap] = useState<MinimapProjection | null>(null)
   const settledRef = useRef(false)
+  /** Seed emphasis pulse — the feedback that makes a frame click undeniable. */
+  const pulseRef = useRef<{ until: number; keys: Set<string> } | null>(null)
 
   const selectedRef = useRef(selected); selectedRef.current = selected
   const hoveredRef = useRef<GraphNode | null>(null); hoveredRef.current = hovered
@@ -153,7 +172,15 @@ export default function PlanetaryWeb(props: Props) {
   const fgNodeIndex = useMemo(
     () => new Map(fgNodes.map(n => [n.id, n])), [fgNodes])
 
-  /* Context tiers: focus > insight highlight > selection. */
+  /** Links inside the active frame, by undirected id. */
+  const frameLinks = useMemo(
+    () => new Set(focusFrame?.linkKeys ?? []), [focusFrame])
+  const frameLinksRef = useRef(frameLinks); frameLinksRef.current = frameLinks
+  const frameSeeds = useMemo(
+    () => new Set(focusFrame?.seedKeys ?? []), [focusFrame])
+  const frameSeedsRef = useRef(frameSeeds); frameSeedsRef.current = frameSeeds
+
+  /* Context tiers: focus > frame > insight highlight > selection. */
   const { tierMap, relations } = useMemo((): {
     tierMap: Map<string, ContextTier> | null
     relations: Map<string, RelationType>
@@ -167,6 +194,16 @@ export default function PlanetaryWeb(props: Props) {
       if (selCtx) for (const [k, t] of selCtx.tiers) if (m.has(k) && t !== 'related') m.set(k, t)
       return { tierMap: m, relations: selCtx?.relations ?? new Map() }
     }
+    if (focusFrame) {
+      // Seeds are the subjects — they get the core treatment (ring, bold
+      // label, top of the label plan). Context is the connective tissue.
+      const m = new Map<string, ContextTier>()
+      for (const k of focusFrame.contextKeys) m.set(k, 'direct')
+      for (const k of focusFrame.seedKeys) m.set(k, 'core')
+      // A selection made inside a frame keeps its own relation labels.
+      const rel = selCtx && m.has(selCtx.core) ? selCtx.relations : new Map<string, RelationType>()
+      return { tierMap: m, relations: rel }
+    }
     if (highlightKeys && highlightKeys.size > 0) {
       const m = new Map<string, ContextTier>()
       for (const k of highlightKeys) m.set(k, 'direct')
@@ -175,7 +212,7 @@ export default function PlanetaryWeb(props: Props) {
     }
     if (!selCtx) return { tierMap: null, relations: new Map() }
     return { tierMap: selCtx.tiers, relations: selCtx.relations }
-  }, [selected, highlightKeys, focusNode])
+  }, [selected, highlightKeys, focusNode, focusFrame])
 
   const tierMapRef = useRef(tierMap); tierMapRef.current = tierMap
   const relationsRef = useRef(relations); relationsRef.current = relations
@@ -225,8 +262,11 @@ export default function PlanetaryWeb(props: Props) {
       const r = Math.cbrt(Math.max(n.val, 0.001))
 
       applyRadius(v, r)
-      // Hover lifts the node without touching geometry.
-      v.group.scale.setScalar(isHovered ? 1.15 : 1)
+      // Hover lifts the node without touching geometry. A pulsing seed owns
+      // its own scale until the pulse ends, so the two never fight.
+      if (!pulseRef.current?.keys.has(key)) {
+        v.group.scale.setScalar(isHovered ? 1.15 : 1)
+      }
 
       v.countMat.opacity = dimmed ? 0.12 : tier === 'related' ? 0.5 : 1
 
@@ -290,7 +330,8 @@ export default function PlanetaryWeb(props: Props) {
         if (hoveredRef.current?.key === n.id) return '#FFFFFF'
         if (!tm) return n.color
         const tier = tm.get(n.id)
-        if (!tier) return rgba('#1F2937', DIM_OPACITY)
+        // A frame dims harder than a selection: it is the whole picture.
+        if (!tier) return rgba('#1F2937', frameLinksRef.current.size > 0 ? FRAME_DIM_OPACITY : DIM_OPACITY)
         return tier === 'related' ? rgba(n.color, 0.6) : n.color
       })
       .nodeOpacity(0.92)
@@ -304,6 +345,15 @@ export default function PlanetaryWeb(props: Props) {
         // Hovering brightens the node's own connections in their type colours.
         if (hov && (sId === hov.key || tId === hov.key)) {
           const leadsTo = sId === hov.key ? l.tType : l.sType
+          return rgba(NODE_COLORS[leadsTo] || '#94A3B8', 0.95)
+        }
+        const fl = frameLinksRef.current
+        if (fl.size > 0) {
+          // Inside a frame, every member link is drawn at full strength in the
+          // colour of the entity it leads to — the relationships *are* the point.
+          if (!fl.has(linkId(sId, tId))) return 'rgba(31,41,55,0.05)'
+          const seeds = frameSeedsRef.current
+          const leadsTo = seeds.has(sId) ? l.tType : seeds.has(tId) ? l.sType : l.tType
           return rgba(NODE_COLORS[leadsTo] || '#94A3B8', 0.95)
         }
         if (!tm) {
@@ -324,6 +374,12 @@ export default function PlanetaryWeb(props: Props) {
         const tId = typeof l.target === 'object' ? l.target.id : l.target
         const hov = hoveredRef.current
         if (hov && (sId === hov.key || tId === hov.key)) return 1.1
+        const fl = frameLinksRef.current
+        if (fl.size > 0) {
+          if (!fl.has(linkId(sId, tId))) return 0.25
+          const seeds = frameSeedsRef.current
+          return seeds.has(sId) || seeds.has(tId) ? 2.0 : 1.2
+        }
         if (!tm) return 0.4
         const sTier = tm.get(sId)
         const tTier = tm.get(tId)
@@ -442,7 +498,7 @@ export default function PlanetaryWeb(props: Props) {
     graphRef.current.nodeColor(graphRef.current.nodeColor())
     graphRef.current.linkColor(graphRef.current.linkColor())
     graphRef.current.linkWidth(graphRef.current.linkWidth())
-  }, [tierMap, selected, expiringSet, hovered, paint])
+  }, [tierMap, selected, expiringSet, hovered, frameLinks, paint])
 
   /* ─── Phantom nodes for structural gaps ─── */
   useEffect(() => {
@@ -526,6 +582,21 @@ export default function PlanetaryWeb(props: Props) {
         }
       }
 
+      // Seed pulse runs every frame, not at planning cadence — it has to be
+      // smooth to read as a response to the click.
+      const pulse = pulseRef.current
+      if (pulse) {
+        const remain = pulse.until - t
+        if (remain <= 0) {
+          for (const k of pulse.keys) visualsRef.current.get(k)?.group.scale.setScalar(1)
+          pulseRef.current = null
+        } else {
+          const p = remain / PULSE_MS
+          const s = 1 + 0.5 * p * Math.sin((1 - p) * Math.PI * 2)
+          for (const k of pulse.keys) visualsRef.current.get(k)?.group.scale.setScalar(s)
+        }
+      }
+
       if (t - lastPlan < interval) return
       lastPlan = t
 
@@ -566,7 +637,12 @@ export default function PlanetaryWeb(props: Props) {
         tiers: tierMapRef.current,
         hoveredKey: hoveredRef.current?.key ?? null,
         selectedKey: selectedRef.current?.key ?? null,
-        alwaysLabel: new Set(fgNodes.filter(n => n.labelAlways).map(n => n.id)),
+        // Frame seeds are pinned: they outrank the field for label space, so
+        // the subjects of a finding are always named on arrival.
+        alwaysLabel: new Set([
+          ...fgNodes.filter(n => n.labelAlways).map(n => n.id),
+          ...frameSeedsRef.current,
+        ]),
         maxValue,
         viewport: { width, height },
       })
@@ -651,6 +727,39 @@ export default function PlanetaryWeb(props: Props) {
     fly({ kind: 'frameNodes', keys: [...highlightKeys] })
   }, [highlightKeys, fly])
 
+  /**
+   * Staging a frame. The camera flies to the members, but a frame whose pose
+   * is already on screen would otherwise produce a click with no visible
+   * response — so the seeds always pulse. Every activation is felt.
+   */
+  useEffect(() => {
+    if (!focusFrame) { pulseRef.current = null; return }
+    const director = directorRef.current
+    const graph = graphRef.current
+    if (!director || !graph) return
+
+    const keys = [...frameMembers(focusFrame)]
+    const from = graph.cameraPosition()
+    const pose = director.resolve({ kind: 'frameNodes', keys })
+    const moved = pose
+      ? Math.hypot(pose.position.x - from.x, pose.position.y - from.y, pose.position.z - from.z)
+      : 0
+    if (pose && moved >= CAMERA_NOOP_DISTANCE) {
+      director.flyTo({ kind: 'frameNodes', keys })
+    }
+    const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (!reduced) {
+      pulseRef.current = {
+        until: performance.now() + PULSE_MS,
+        keys: new Set(focusFrame.seedKeys),
+      }
+    }
+    ;(window as any).__web.lastFrame = {
+      id: focusFrame.id, moved: Math.round(moved),
+      seeds: focusFrame.seedKeys.length, links: focusFrame.linkKeys.length,
+    }
+  }, [focusFrame])
+
   useEffect(() => {
     if (!selected || focusNode) return
     fly({ kind: 'frameNodes', keys: [selected.key, ...[...selected.neighbors].map(n => n.key)] })
@@ -671,14 +780,15 @@ export default function PlanetaryWeb(props: Props) {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA')) return
       if (e.key === 'Escape') {
         if (focusNode) onFocusRef.current?.(null)
-        else onSelectRef.current(null)
+        // A frame is released by the screen that owns it, one layer at a time.
+        else if (!focusFrame) onSelectRef.current(null)
       } else if (e.key === 'f' || e.key === 'F') {
         fly({ kind: 'overview' }, false)
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [focusNode, fly])
+  }, [focusNode, focusFrame, fly])
 
   /* ─── Resize ─── */
   useEffect(() => {
@@ -878,11 +988,14 @@ export default function PlanetaryWeb(props: Props) {
             </div>
           </div>
 
-          <div className="absolute bottom-3 left-3" style={{ pointerEvents: 'none' }}>
-            <span className="text-[9px]" style={{ color: '#374151' }}>
-              Hover · Click to inspect · Double-click to focus · F to fit · Esc to clear
-            </span>
-          </div>
+          {/* The frame card occupies this corner while one is staged. */}
+          {!focusFrame && (
+            <div className="absolute bottom-3 left-3" style={{ pointerEvents: 'none' }}>
+              <span className="text-[9px]" style={{ color: '#374151' }}>
+                Hover · Click to inspect · Double-click to focus · F to fit · Esc to clear
+              </span>
+            </div>
+          )}
         </>
       )}
     </div>

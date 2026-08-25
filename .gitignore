@@ -1,0 +1,6 @@
+
+# Vitest cache at the repo root (the app has its own node_modules).
+/node_modules/
+
+# Vitest cache at the repo root; the app has its own node_modules.
+/node_modules/

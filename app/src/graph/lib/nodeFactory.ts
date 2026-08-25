@@ -12,6 +12,30 @@ export interface LabelStyle {
   subtitleColor?: string
 }
 
+/** The measurement surface a canvas context needs; kept minimal so it is testable. */
+export interface TextMeasurer {
+  measureText: (t: string) => { width: number }
+}
+
+/**
+ * Longest prefix of `text` that fits `maxWidth` in the measurer's current
+ * font, ellipsised when anything was dropped.
+ *
+ * Truncating by character count instead overruns the fixed-width label
+ * texture, and because the text is centred it is then clipped at *both* ends —
+ * mangling exactly the long names a focus frame most needs to show.
+ */
+export function fitText(c: TextMeasurer, text: string, maxWidth: number): string {
+  if (c.measureText(text).width <= maxWidth) return text
+  let lo = 0, hi = text.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (c.measureText(text.slice(0, mid) + '…').width <= maxWidth) lo = mid
+    else hi = mid - 1
+  }
+  return text.slice(0, lo) + '…'
+}
+
 function styleKey(s: LabelStyle, level: LabelLevel): string {
   return [level, s.title, s.subtitle ?? '', s.bold ? 'b' : '', s.titleColor ?? '', s.subtitleColor ?? ''].join('|')
 }
@@ -64,14 +88,19 @@ export class TextureCache {
     const c = canvas.getContext('2d')!
     c.clearRect(0, 0, W, H)
 
-    const text = style.title.length > 30 ? style.title.slice(0, 29) + '…' : style.title
     const titleFont = `${style.bold ? '600 ' : ''}44px Inter, system-ui, sans-serif`
     c.font = titleFont
+    // Truncate by measured width, not character count: a 23-character name at
+    // 44px overruns the 512px texture and gets clipped at *both* ends, which
+    // silently mangles exactly the long names a frame most needs to show.
+    const text = fitText(c,style.title, W - 48)
     const titleW = c.measureText(text).width
     let subW = 0
+    let sub = style.subtitle
     if (twoLine) {
       c.font = '30px Inter, system-ui, sans-serif'
-      subW = c.measureText(style.subtitle!).width
+      sub = fitText(c,style.subtitle!, W - 48)
+      subW = c.measureText(sub).width
     }
     const plateW = Math.min(W - 8, Math.max(titleW, subW) + 40)
 
@@ -92,7 +121,7 @@ export class TextureCache {
     if (twoLine) {
       c.fillStyle = style.subtitleColor ?? '#94A3B8'
       c.font = '30px Inter, system-ui, sans-serif'
-      c.fillText(style.subtitle!, W / 2, 90)
+      c.fillText(sub!, W / 2, 90)
     }
 
     const tex = new THREE.CanvasTexture(canvas)

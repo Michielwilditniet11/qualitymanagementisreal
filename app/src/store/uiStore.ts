@@ -6,6 +6,11 @@ type View = 'upload' | 'web' | 'diagnostics' | 'calendar' | 'kraljic' | 'reports
 export interface PendingSelection {
   type: 'supplier' | 'category' | 'department' | 'owner' | 'contract'
   name: string
+  /**
+   * Where the jump came from, as a sentence. Shown in the Focus Frame card so
+   * arriving on a node explains itself rather than dropping you somewhere.
+   */
+  origin?: string
 }
 
 interface UIState {

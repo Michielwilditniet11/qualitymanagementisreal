@@ -17,6 +17,40 @@ terminal: a data ticker on top, mono-set figures, one lens active at a time.
 Every entity name in every tab links into the Web with that node selected.
 Press `?` on the Web tab for the full keyboard sheet.
 
+## Focus Frames — what happens when you click a finding
+
+Every way into the web — a briefing chip, a finding, a ticker figure, a gap, an
+entity link from another tab, a story step — stages the same thing: a **Focus
+Frame**. A frame is never a set of floating dots, because the relationships are
+the only thing the 3D view offers that a table does not.
+
+- **It is an induced subgraph.** The subjects of the finding *plus the
+  connective tissue between them* — the departments, categories, suppliers and
+  owners that link them. Two hops, not one: a supplier's departments sit behind
+  its contracts, so stopping at one hop would answer none of the questions the
+  frame exists to answer.
+- **Two tiers.** Subjects are ringed and always labelled — they outrank the
+  whole field for label space. The connectors stay lit and labelled where they
+  fit. Everything else drops to near-black, far deeper than a selection dims,
+  so the frame reads as *the* picture.
+- **Links are the point.** Every link inside the frame is drawn at full
+  strength in the colour of the entity it leads to, at double weight where it
+  touches a subject. Links outside it fade almost to nothing.
+- **The camera always responds.** It flies to frame the members; when it is
+  already there, the subjects pulse instead. No click is ever silent.
+- **A card explains it.** Bottom-left: the finding, its figure, the members as
+  clickable chips, what the ring and the line colours mean *in this frame*, the
+  suggested next step, and a jump into the Calendar or Diagnostics where one
+  applies. Arriving from another tab carries its origin into the caption.
+- **One escape.** Esc releases the frame first and the selection second; the
+  `FRAME …` chip in the state strip and the card's × do the same.
+
+Frames are engine output end to end — `src/analytics/focusFrame.ts` composes
+what the detectors already found and performs no analysis of its own, so a
+frame can never disagree with the panel that produced it. When the surrounding
+context is too large to show, the frame keeps the most connected nodes and the
+caption says so rather than pretending it showed everything.
+
 ## Reading the map
 
 - The default view is **fully labelled**: an importance-ranked label engine
@@ -106,9 +140,9 @@ Ten detectors run over the register:
 9. **Expired but active** — contracts past their end date still in the register.
 10. **Data confidence** — completeness below 90%.
 
-Clicking a finding pins its nodes in the graph, dims everything else, switches
-to the lens that shows it best, and flies the camera to frame the cluster. The
-open card also carries a suggested next step. "Clear highlight" releases it.
+Clicking a finding stages it as a **Focus Frame** (see above): its nodes plus
+what connects them, lit and labelled against a dimmed field, with the lens
+switched, the camera moved and a card explaining what you are looking at.
 
 Below the findings, **Key suppliers** and **Contract owners** rank stakeholders
 by a systemic score blending spend, department reach and connectivity.
@@ -236,5 +270,6 @@ All analytics are pure functions under `app/src/analytics/`, unit-tested in
 - `lenses.ts` — lens definitions and per-node styling.
 - `insights.ts` — the ten detectors and the ranking engine.
 - `centrality.ts` — systemic scoring, ego networks, impact assessment.
+- `focusFrame.ts` — connective closure, and the frame behind every jump in.
 
 Run `npm test` for the analytics suite and `npm run build` to type-check.

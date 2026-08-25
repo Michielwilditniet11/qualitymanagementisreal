@@ -6,13 +6,15 @@ import PlanetaryWeb, { riskScore, riskLevel, riskReasons, RISK_COLORS, fmtK, fmt
 import type { WebHandle } from '../../graph/PlanetaryWeb'
 import { AlertTriangle, Shield, ShieldCheck, User, Building2, Tag, DollarSign, FileText, ChevronRight, ChevronLeft, X, Play, Sun } from 'lucide-react'
 import type { GraphNode } from '../../data/types'
-import { LENSES, lensForCategory, type LensId } from '../../analytics/lenses'
+import { LENSES, type LensId } from '../../analytics/lenses'
 import { generateInsights, totalValueAtRisk, type Insight } from '../../analytics/insights'
 import { computeCentrality, assessImpact } from '../../analytics/centrality'
 import { findGaps, gapExposure, type Gap } from '../../analytics/gaps'
 import { buildStory, type StoryStep } from '../../analytics/story'
 import { negotiationCalendar } from '../../analytics/levers'
 import { lensBriefing, lensBadges } from '../../analytics/briefings'
+import { buildFocusFrame, type FocusFrame, type FrameSource } from '../../analytics/focusFrame'
+import FrameCard from './FrameCard'
 import { T, Tick, TerminalSelect } from '../../ui'
 
 /* Terminal tokens live in src/ui/theme; re-exported so existing imports of
@@ -44,7 +46,7 @@ const SHORTCUTS: [string, string][] = [
   ['1–7', 'switch lens'],
   ['F', 'fit everything'],
   ['S', 'spotlight'],
-  ['Esc', 'clear selection / exit'],
+  ['Esc', 'release frame, then selection'],
   ['Alt ←', 'back'],
   ['?', 'this sheet'],
   ['← →', 'story steps'],
@@ -62,6 +64,11 @@ export default function WebScreen() {
   const [highlightExpiring, setHighlightExpiring] = useState(0)
   const [lens, setLens] = useState<LensId>('structure')
   const [activeInsight, setActiveInsight] = useState<Insight | null>(null)
+  const [frame, setFrame] = useState<FocusFrame | null>(null)
+  /** An arrival from another tab, held until openFrame exists below. */
+  const [pendingFrameKey, setPendingFrameKey] =
+    useState<{ key: string; origin?: string } | null>(null)
+  const goToTab = useUIStore(s => s.setView)
   const [focusNode, setFocusNode] = useState<GraphNode | null>(null)
   const [deptFilter, setDeptFilter] = useState<Set<string>>(new Set())
   const [riskFilter, setRiskFilter] = useState<RiskFilter>('all')
@@ -111,6 +118,9 @@ export default function WebScreen() {
       setSelected(n)
       setActiveInsight(null)
       setFocusNode(null)
+      // Arrive framed, not merely selected: the point of the jump is to see
+      // what this node connects to.
+      setPendingFrameKey({ key: n.key, origin: pendingSelection.origin })
     }
     clearPendingSelection()
   }, [pendingSelection, nodes, clearPendingSelection, setSelected])
@@ -148,44 +158,56 @@ export default function WebScreen() {
     return hidden
   }, [nodes, deptFilter, riskFilter])
 
-  /* ─── Story mode drives lens + highlight + camera ─── */
+  /**
+   * Every jump into the web goes through here. A frame stages the induced
+   * subgraph, its lens and its explanation together, so no entry point can
+   * move the camera and leave the user to work out why.
+   */
+  const openFrame = useCallback((source: FrameSource) => {
+    const f = buildFocusFrame(source, nodes, links, contracts)
+    if (!f) return
+    setFrame(prev => {
+      if (prev?.id === f.id) return null   // clicking the same thing releases it
+      setLens(f.lens)
+      setFocusNode(null)
+      return f
+    })
+  }, [nodes, links, contracts])
+
+  const clearFrame = useCallback(() => {
+    setFrame(null); setActiveInsight(null)
+  }, [])
+
+  useEffect(() => {
+    if (!pendingFrameKey) return
+    openFrame({ kind: 'entity', nodeKey: pendingFrameKey.key, origin: pendingFrameKey.origin })
+    setPendingFrameKey(null)
+  }, [pendingFrameKey, openFrame])
+
+  /* ─── Story mode drives lens + frame + camera through the same path ─── */
   const storyStep = story?.[storyIdx] ?? null
-  const storyKeys = useMemo(() => {
-    if (!storyStep) return null
-    const known = new Set(nodes.map(n => n.key))
-    return new Set(storyStep.nodeKeys.filter(k => known.has(k)))
-  }, [storyStep, nodes])
 
   useEffect(() => {
     if (!storyStep) return
     setLens(storyStep.lens)
-    const h = handleRef.current
-    if (!h) return
-    // Give the lens a beat to apply before the camera moves.
-    const t = setTimeout(() => {
-      if (storyStep.camera === 'overview' || !storyKeys || storyKeys.size === 0) h.fit()
-      else h.frame([...storyKeys])
-    }, 120)
-    return () => clearTimeout(t)
-  }, [storyStep, storyKeys])
+    if (storyStep.camera === 'overview' || storyStep.nodeKeys.length === 0) {
+      setFrame(null)
+      const t = setTimeout(() => handleRef.current?.fit(), 120)
+      return () => clearTimeout(t)
+    }
+    setFrame(buildFocusFrame({ kind: 'story', step: storyStep }, nodes, links, contracts))
+  }, [storyStep, nodes, links, contracts])
 
   const startStory = () => {
     const s = buildStory(contracts, nodes)
     if (s.length === 0) return
-    setSelected(null); setActiveInsight(null); setFocusNode(null)
+    setSelected(null); setActiveInsight(null); setFocusNode(null); setFrame(null)
     setStory(s); setStoryIdx(0); setSpotlight(true)
   }
   const exitStory = useCallback(() => {
-    setStory(null); setSpotlight(false)
+    setStory(null); setSpotlight(false); setFrame(null)
     handleRef.current?.fit()
   }, [])
-
-  const highlightKeys = useMemo(() => {
-    if (storyKeys && storyKeys.size > 0) return storyKeys
-    if (!activeInsight) return null
-    const known = new Set(nodes.map(n => n.key))
-    return new Set(activeInsight.nodeKeys.filter(k => known.has(k)))
-  }, [activeInsight, nodes, storyKeys])
 
   /* ─── Keyboard: lenses, story nav, spotlight ─── */
   useEffect(() => {
@@ -198,6 +220,8 @@ export default function WebScreen() {
         else if (e.key === 'Escape') exitStory()
         return
       }
+      // Esc peels one layer at a time; the frame is the outermost.
+      if (e.key === 'Escape' && frame) { clearFrame(); return }
       const li = parseInt(e.key)
       if (li >= 1 && li <= LENSES.length) setLens(LENSES[li - 1].id)
       else if (e.key === 's' || e.key === 'S') setSpotlight(v => !v)
@@ -206,7 +230,7 @@ export default function WebScreen() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [story, exitStory, goBack])
+  }, [story, exitStory, goBack, frame, clearFrame])
 
   /* ─── Ticker figures ─── */
   const kpis = useMemo(() => {
@@ -224,10 +248,10 @@ export default function WebScreen() {
   }, [contracts, insights, gaps, calendar])
 
   const openInsight = (i: Insight) => {
-    if (activeInsight?.id === i.id) { setActiveInsight(null); return }
+    if (activeInsight?.id === i.id) { setActiveInsight(null); setFrame(null); return }
     setActiveInsight(i)
-    setLens(lensForCategory(i.category))
     setSelectedRaw(null)
+    openFrame({ kind: 'insight', insight: i })
   }
 
   const toggleType = (t: string) => {
@@ -251,7 +275,7 @@ export default function WebScreen() {
   }
 
   const clearAll = () => {
-    setSelectedRaw(null); setActiveInsight(null); setFocusNode(null)
+    setSelectedRaw(null); setActiveInsight(null); setFocusNode(null); setFrame(null)
     setDeptFilter(new Set()); setRiskFilter('all'); setSearchQuery('')
     setSpendThreshold(0); setHighlightExpiring(0); setSpotlight(false)
     setVisibleTypes({ department: true, category: true, supplier: true, owner: true, contract: true })
@@ -266,7 +290,7 @@ export default function WebScreen() {
   if (highlightExpiring > 0) chips.push({ label: `EXP ≤${highlightExpiring}D`, onClear: () => setHighlightExpiring(0), hue: T.amber })
   if (searchQuery) chips.push({ label: `FIND "${searchQuery.toUpperCase()}"`, onClear: () => setSearchQuery('') })
   if (focusNode) chips.push({ label: `FOCUS ${focusNode.name.toUpperCase()}`, onClear: () => setFocusNode(null), hue: T.cyan })
-  if (activeInsight) chips.push({ label: 'INSIGHT PINNED', onClear: () => setActiveInsight(null), hue: T.amber })
+  if (frame) chips.push({ label: `FRAME ${frame.title.toUpperCase()}`, onClear: clearFrame, hue: T.amber })
   if (spotlight && !story) chips.push({ label: 'SPOTLIGHT', onClear: () => setSpotlight(false), hue: T.amber })
   const hiddenTypes = Object.entries(visibleTypes).filter(([, v]) => !v)
   for (const [t] of hiddenTypes) chips.push({ label: `HIDE ${t.toUpperCase()}S`, onClear: () => toggleType(t) })
@@ -280,13 +304,17 @@ export default function WebScreen() {
         {!story && (
           <div className="flex items-stretch overflow-x-auto border-b"
             style={{ background: T.ground, borderColor: T.hairline, fontFamily: T.mono }}>
-            <Tick label="SPEND" value={fmtK(kpis.totalSpend)} color={T.text} onClick={() => setLens('spend')} />
-            <Tick label="AT RISK" value={fmtK(kpis.atRisk)} color={T.red} onClick={() => setLens('risk')}
+            <Tick label="SPEND" value={fmtK(kpis.totalSpend)} color={T.text}
+              onClick={() => openFrame({ kind: 'kpi', metric: 'spend' })} />
+            <Tick label="AT RISK" value={fmtK(kpis.atRisk)} color={T.red}
+              onClick={() => openFrame({ kind: 'kpi', metric: 'atRisk' })}
               sub={kpis.totalSpend > 0 ? `${Math.round((kpis.atRisk / kpis.totalSpend) * 100)}%` : undefined} />
             <Tick label="EXP 90D" value={`${kpis.expiringCount}·${fmtK(kpis.expiringValue)}`} color={T.amber}
-              onClick={() => { setLens('expiry'); setHighlightExpiring(90) }} />
-            <Tick label="WINDOWS" value={String(kpis.openWindows)} color={T.cyan} onClick={() => setLens('expiry')} />
-            <Tick label="GAPS" value={`${kpis.gapCount}·${fmtK(kpis.gapExposure)}`} color="#F472B6" onClick={() => setLens('gaps')} />
+              onClick={() => openFrame({ kind: 'kpi', metric: 'expiring' })} />
+            <Tick label="WINDOWS" value={String(kpis.openWindows)} color={T.cyan}
+              onClick={() => openFrame({ kind: 'kpi', metric: 'windows' })} />
+            <Tick label="GAPS" value={`${kpis.gapCount}·${fmtK(kpis.gapExposure)}`} color="#F472B6"
+              onClick={() => openFrame({ kind: 'kpi', metric: 'gaps' })} />
             <div className="flex-1" style={{ borderRight: 'none' }} />
             <button onClick={startStory}
               className="flex items-center gap-1.5 px-4 text-[10px] font-semibold tracking-widest cursor-pointer flex-shrink-0 transition-colors hover:brightness-125"
@@ -442,7 +470,7 @@ export default function WebScreen() {
             <div className="flex-1 flex gap-2 flex-wrap min-w-0">
               {briefing.items.map((it, i) => (
                 <button key={i}
-                  onClick={() => it.nodeKeys.length && handleRef.current?.frame(it.nodeKeys)}
+                  onClick={() => openFrame({ kind: 'briefing', lens, item: it, index: i })}
                   className="flex items-baseline gap-2 px-2 py-1 text-left cursor-pointer transition-colors hover:brightness-150 min-w-0"
                   style={{ background: T.panel, border: `1px solid ${T.hairline}`, maxWidth: '340px' }}>
                   <span className="text-[10px] truncate" style={{ color: T.dim }}>{it.label}</span>
@@ -472,7 +500,7 @@ export default function WebScreen() {
           spendThreshold={spendThreshold}
           highlightExpiring={highlightExpiring}
           lens={lens}
-          highlightKeys={highlightKeys}
+          focusFrame={frame}
           focusNode={focusNode}
           onFocus={setFocusNode}
           gaps={gaps}
@@ -481,6 +509,20 @@ export default function WebScreen() {
           chromeless={Boolean(story)}
           onReady={h => { handleRef.current = h }}
         />
+
+        {/* ─── The frame's explanation — why this picture, how to read it ─── */}
+        {frame && (
+          <FrameCard
+            frame={frame} nodes={nodes}
+            step={story ? `${storyIdx + 1} / ${story.length}` : undefined}
+            onSelect={n => setSelected(n)}
+            onClose={story ? exitStory : clearFrame}
+            onCrossLink={target => {
+              if (target === 'calendar') goToTab('calendar')
+              else goToTab('diagnostics')
+            }}
+          />
+        )}
 
         {/* ─── First-run coach marks ─── */}
         {!story && coachStep < COACH.length && (
@@ -585,8 +627,8 @@ export default function WebScreen() {
           style={{ background: T.panel, borderColor: T.hairline }}>
           {!selected ? (
             lens === 'gaps' ? (
-              <GapsPanel gaps={gaps} contracts={contracts}
-                onFrame={keys => handleRef.current?.frame(keys)} />
+              <GapsPanel gaps={gaps} contracts={contracts} activeId={frame?.id ?? null}
+                onOpenGap={gap => openFrame({ kind: 'gap', gap })} />
             ) : (
               <InsightsPanel
                 nodes={nodes} links={links} contracts={contracts}
@@ -610,9 +652,10 @@ export default function WebScreen() {
 /* ─── Terminal primitives ─── */
 
 
-function GapsPanel({ gaps, contracts, onFrame }: {
+function GapsPanel({ gaps, contracts, onOpenGap, activeId }: {
   gaps: Gap[]; contracts: any[]
-  onFrame: (keys: string[]) => void
+  onOpenGap: (g: Gap) => void
+  activeId: string | null
 }) {
   const exposure = gapExposure(gaps, contracts)
   return (
@@ -630,9 +673,12 @@ function GapsPanel({ gaps, contracts, onFrame }: {
       )}
       <div className="space-y-2">
         {gaps.map(g => (
-          <button key={g.id} onClick={() => g.nodeKeys.length && onFrame(g.nodeKeys)}
+          <button key={g.id} onClick={() => onOpenGap(g)}
             className="w-full text-left rounded-sm p-2.5 cursor-pointer transition-colors hover:border-[#F472B6]"
-            style={{ background: T.ground, border: `1px solid ${T.hairline}` }}>
+            style={{
+              background: T.ground,
+              border: `1px solid ${activeId === `gap:${g.id}` ? '#F472B6' : T.hairline}`,
+            }}>
             <div className="flex items-baseline justify-between gap-2">
               <span className="text-[11px] font-medium text-white">{g.title}</span>
               <span className="text-[10px] tabular-nums flex-shrink-0" style={{ color: '#F472B6', fontFamily: T.mono }}>

@@ -1,7 +1,16 @@
 # Focus Frame Plan — every jump into the Spider Web lands as an explained relationship view
 
-**Status: plan — not yet implemented.**
-Target: implementation by Opus/Sonnet, phase by phase, committing per phase.
+**Status: implemented.** All six phases landed; see `docs/FEATURES.md` for the
+user-facing behaviour and `src/analytics/focusFrame.ts` for the engine.
+
+Phase 0 measured the problem in the browser before any code changed. Every
+briefing chip was clicked on the sample register and the camera delta
+recorded: *"55 contracts across 8 departments"* moved the camera **0.0 units**
+— a literally dead button, as predicted from its empty `nodeKeys`. Every other
+chip moved the camera 200–800 units, which proved the camera was never the
+fault: arriving somewhere in a 137-node cloud with no selection, no highlight,
+no dimming, no guaranteed labels and no explanation is indistinguishable from
+drifting. That measurement is what the rest of the plan was built to fix.
 
 ## The problem, precisely
 
