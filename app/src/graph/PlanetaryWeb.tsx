@@ -9,13 +9,15 @@ import { lensStyle, buildLensContext, LENSES, type LensId } from '../analytics/l
 import { egoNetwork } from '../analytics/centrality'
 import { selectionContext, type ContextTier } from '../analytics/selection'
 import { linkId, frameMembers, type FocusFrame } from '../analytics/focusFrame'
+import { contextColor, badgeFor, isLockedRenewal, contractStatus } from '../analytics/typeIdentity'
 import type { Gap } from '../analytics/gaps'
 import { labelPlan, type ScreenNode, type LabelLevel } from './lib/labelPolicy'
 import {
   CameraDirector, type CameraIntent, type Vec3,
 } from './lib/cameraDirector'
 import {
-  TextureCache, buildNodeVisual, applyLabel, applyRadius, type NodeVisual,
+  TextureCache, buildNodeVisual, applyLabel, applyRadius, applyBadge,
+  type NodeVisual,
 } from './lib/nodeFactory'
 import { projectMinimap, nearestKey, type MinimapProjection } from './lib/minimap'
 import { Crosshair, Maximize2, RefreshCw, Focus } from 'lucide-react'
@@ -270,13 +272,29 @@ export default function PlanetaryWeb(props: Props) {
 
       v.countMat.opacity = dimmed ? 0.12 : tier === 'related' ? 0.5 : 1
 
-      // Rings: selection > hover > lens emphasis > expiry.
+      // Type glyph: only inside a context or on hover, so the resting graph
+      // stays calm and the mark means "this is what you are looking at".
+      const inContext = tier !== undefined
+      const badgeHue = contextColor(n.graphNode, tier ?? 'direct') ?? n.color
+      applyBadge(
+        v,
+        !dimmed && (inContext || isHovered) ? badgeFor(n.type as GraphNode['type']) : null,
+        badgeHue,
+      )
+
+      // An expired contract still in the register is an anti-pattern, not a
+      // state — mark it on the node so it cannot be mistaken for a live one.
+      const expiredHere = n.type === 'contract' && inContext &&
+        contractStatus(n.graphNode) === 'expired'
+
+      // Rings: selection > hover > expired > lens emphasis > expiry.
       const ringColor =
         isCore ? '#60A5FA'
           : isHovered ? '#93C5FD'
-            : n.ring ? n.ring
-              : exp.has(key) ? '#D97706'
-                : null
+            : expiredHere ? (isLockedRenewal(n.graphNode) ? '#DC2626' : '#64748B')
+              : n.ring ? n.ring
+                : exp.has(key) ? '#D97706'
+                  : null
       if (ringColor && !dimmed) {
         v.ring.visible = true
         if (v.applied.ringColor !== ringColor) {
@@ -299,15 +317,27 @@ export default function PlanetaryWeb(props: Props) {
       }
       const relation = rel.get(key)
       const value = n.graphNode.value > 0 ? fmtK(n.graphNode.value) : undefined
-      const subtitle = tier === 'direct' && relation
-        ? [RELATION_LABELS[relation], value].filter(Boolean).join(' · ')
-        : value
+      // "Expired" belongs on the label: it is the fact that changes what you
+      // would do about the contract.
+      const state = expiredHere
+        ? (isLockedRenewal(n.graphNode) ? 'expired · auto-renewed' : 'expired')
+        : undefined
+      const subtitle = [
+        tier === 'direct' && relation ? RELATION_LABELS[relation] : undefined,
+        state, value,
+      ].filter(Boolean).join(' · ') || undefined
       v.group.userData.labelStyle = {
         title: n.name,
         subtitle,
         bold: isCore,
-        titleColor: isCore ? '#FFFFFF' : tier === 'related' ? 'rgba(226,232,240,0.7)' : '#E2E8F0',
-        subtitleColor: tier === 'direct' && relation ? (NODE_COLORS[n.type] || '#94A3B8') : 'rgba(148,163,184,0.85)',
+        // In a context the title carries the type colour too, so a label on
+        // its own identifies the kind without the legend.
+        titleColor: isCore ? '#FFFFFF'
+          : tier === 'direct' ? badgeHue
+            : tier === 'related' ? 'rgba(226,232,240,0.7)' : '#E2E8F0',
+        subtitleColor: state ? '#94A3B8'
+          : tier === 'direct' && relation ? (NODE_COLORS[n.type] || '#94A3B8')
+            : 'rgba(148,163,184,0.85)',
       }
       v.group.userData.labelScale = isCore ? 1.15 : tier === 'related' ? 0.8 : 1
       v.group.userData.cache = cache
@@ -332,7 +362,10 @@ export default function PlanetaryWeb(props: Props) {
         const tier = tm.get(n.id)
         // A frame dims harder than a selection: it is the whole picture.
         if (!tier) return rgba('#1F2937', frameLinksRef.current.size > 0 ? FRAME_DIM_OPACITY : DIM_OPACITY)
-        return tier === 'related' ? rgba(n.color, 0.6) : n.color
+        // Inside a context the question is "what kinds of things are these?",
+        // so type identity outranks the lens for everything but the subject.
+        const hue = contextColor(n.graphNode, tier) ?? n.color
+        return tier === 'related' ? rgba(hue, 0.6) : hue
       })
       .nodeOpacity(0.92)
       .nodeThreeObjectExtend(true)
@@ -928,6 +961,12 @@ export default function PlanetaryWeb(props: Props) {
                 </label>
               )
             })}
+            <div className="mt-2 pt-2 text-[9px] leading-relaxed"
+              style={{ borderTop: '1px solid #1F2937', color: '#4B5563', maxWidth: '164px' }}>
+              Select anything and its surroundings switch to these type colours,
+              with a badge on people, departments, categories and suppliers.
+              Faded contracts with a grey ring are past their end date.
+            </div>
           </div>
 
           {/* Camera controls */}

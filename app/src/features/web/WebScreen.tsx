@@ -170,6 +170,10 @@ export default function WebScreen() {
       if (prev?.id === f.id) return null   // clicking the same thing releases it
       setLens(f.lens)
       setFocusNode(null)
+      // A frame is a new subject, so a selection left over from the last one
+      // would leave the drawer describing something the card does not.
+      // An 'entity' frame is the exception: there the selection *is* the subject.
+      if (source.kind !== 'entity') setSelectedRaw(null)
       return f
     })
   }, [nodes, links, contracts])

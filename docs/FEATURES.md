@@ -165,6 +165,26 @@ highlight, then selection-neighbourhood highlighting.
 
 Selecting a node explains what surrounds it, without a second click:
 
+- **Type identity outranks the lens inside a selection.** Lenses own the field:
+  they recolour the whole graph to answer one question, which is what they are
+  for. But the moment you select something you are asking a different question
+  — *what kinds of things are these?* — and a lens palette hides the answer by
+  painting an owner, a department and a contract in the same risk red. So
+  within a selection or a Focus Frame, surrounding nodes switch to their type
+  colour: **green owners, blue departments, amber categories, pink suppliers,
+  violet contracts.** Because links already take the colour of what they lead
+  to, the line and the node it reaches now agree.
+- **A badge says what each thing is** — a person on owners, a building on
+  departments, a tag on categories, a factory on suppliers. Contracts get no
+  badge: a plain sphere already means "a contract". Badges appear only inside a
+  context or on hover, so the resting graph stays calm.
+- **The subject keeps its lens colour**, so a selected contract still shows
+  *why* you are looking at it (green when low risk, red when high) while
+  everything around it explains *what* it is.
+- **Expired contracts read as expired** — desaturated, with a grey ring and
+  `expired` on the label, or a red ring and `expired · auto-renewed` where the
+  term has already rolled over. That uses the same rule as the "expired but
+  active" finding, so the graph and the findings panel cannot disagree.
 - **Direct neighbours** stay at full colour and are labelled with the
   relationship — `Lisa van Dam · owner`, `HR · department`.
 - **Links take the colour of the entity they lead to**, matching the node-type
@@ -271,5 +291,6 @@ All analytics are pure functions under `app/src/analytics/`, unit-tested in
 - `insights.ts` — the ten detectors and the ranking engine.
 - `centrality.ts` — systemic scoring, ego networks, impact assessment.
 - `focusFrame.ts` — connective closure, and the frame behind every jump in.
+- `typeIdentity.ts` — who is a person, what is a live contract.
 
 Run `npm test` for the analytics suite and `npm run build` to type-check.

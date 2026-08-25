@@ -1,6 +1,7 @@
 # Type Identity Plan — a selection must show at a glance who is a person, what is a contract
 
-**Status: plan — not yet implemented.**
+**Status: implemented.** All four phases landed; see `docs/FEATURES.md`
+("Reading a selection") and `src/analytics/typeIdentity.ts`.
 
 ## The problem, precisely
 

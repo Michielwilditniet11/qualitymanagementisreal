@@ -140,8 +140,90 @@ export interface NodeVisual {
   ringMat: THREE.MeshBasicMaterial
   glow: THREE.Mesh
   glowMat: THREE.MeshBasicMaterial
+  /** Type glyph — who is a person, what is a department. */
+  badge: THREE.Sprite
+  badgeMat: THREE.SpriteMaterial
   /** Appearance currently applied, so updates can skip no-op work. */
-  applied: { labelKey?: string; ringColor?: string }
+  applied: { labelKey?: string; ringColor?: string; badge?: string }
+}
+
+/* ─── Type glyphs ─── */
+
+export type BadgeKind = 'person' | 'building' | 'tag' | 'factory'
+
+/**
+ * One texture per glyph for the whole scene, built on first use. Five
+ * textures however many thousand nodes exist — a per-node canvas here would
+ * dwarf the label cache.
+ */
+const badgeTextures = new Map<string, THREE.CanvasTexture>()
+
+/**
+ * Simple filled silhouettes; no icon font, no external asset.
+ *
+ * `c` may be null: a 2D context is not guaranteed (a browser under memory
+ * pressure refuses one, and headless environments have no canvas at all). An
+ * undrawn glyph is a blank badge; throwing here would take the whole scene
+ * down over decoration.
+ */
+function drawBadge(c: CanvasRenderingContext2D | null, kind: BadgeKind, color: string) {
+  if (!c) return
+  const S = 64
+  c.clearRect(0, 0, S, S)
+  // Dark disc so the glyph reads against any node colour behind it.
+  c.fillStyle = 'rgba(4,7,14,0.92)'
+  c.beginPath(); c.arc(S / 2, S / 2, 30, 0, Math.PI * 2); c.fill()
+  c.strokeStyle = color; c.lineWidth = 3; c.stroke()
+
+  c.fillStyle = color
+  c.strokeStyle = color
+  c.lineWidth = 5
+  c.lineJoin = 'round'
+  switch (kind) {
+    case 'person':
+      // Head and shoulders.
+      c.beginPath(); c.arc(32, 25, 8, 0, Math.PI * 2); c.fill()
+      c.beginPath(); c.arc(32, 52, 15, Math.PI, 0); c.fill()
+      break
+    case 'building':
+      c.fillRect(19, 22, 12, 26)
+      c.fillRect(34, 30, 12, 18)
+      c.fillRect(17, 46, 31, 4)
+      break
+    case 'tag':
+      c.beginPath()
+      c.moveTo(20, 32); c.lineTo(33, 19); c.lineTo(46, 19)
+      c.lineTo(46, 32); c.lineTo(33, 45); c.closePath(); c.fill()
+      c.fillStyle = 'rgba(4,7,14,0.92)'
+      c.beginPath(); c.arc(40, 26, 3.5, 0, Math.PI * 2); c.fill()
+      break
+    case 'factory':
+      c.fillRect(18, 34, 28, 14)
+      c.beginPath()
+      c.moveTo(18, 34); c.lineTo(30, 26); c.lineTo(30, 34); c.closePath(); c.fill()
+      c.beginPath()
+      c.moveTo(30, 34); c.lineTo(42, 26); c.lineTo(42, 34); c.closePath(); c.fill()
+      c.fillRect(40, 18, 6, 12)
+      break
+  }
+}
+
+export function badgeTexture(kind: BadgeKind, color: string): THREE.CanvasTexture {
+  const key = `${kind}|${color}`
+  const hit = badgeTextures.get(key)
+  if (hit) return hit
+  const canvas = document.createElement('canvas')
+  canvas.width = 64
+  canvas.height = 64
+  drawBadge(canvas.getContext('2d'), kind, color)
+  const tex = new THREE.CanvasTexture(canvas)
+  badgeTextures.set(key, tex)
+  return tex
+}
+
+/** Test hook: how many glyph textures have been allocated in total. */
+export function badgeTextureCount(): number {
+  return badgeTextures.size
 }
 
 /** Base label size in NDC-ish units; sprites are screen-size-locked. */
@@ -192,10 +274,44 @@ export function buildNodeVisual(countText: string): NodeVisual {
   label.visible = false
   group.add(label)
 
+  // Screen-size-locked so the glyph stays readable at any camera distance.
+  const badgeMat = new THREE.SpriteMaterial({
+    transparent: true, depthWrite: false, depthTest: false, sizeAttenuation: false,
+  })
+  const badge = new THREE.Sprite(badgeMat)
+  badge.scale.set(BADGE_SIZE, BADGE_SIZE, 1)
+  // Sit up and to the right of the node, clear of the label below it.
+  badge.center.set(-0.7, -0.5)
+  badge.visible = false
+  group.add(badge)
+
   return {
     group, label, labelMat, count, countMat, ring, ringMat, glow, glowMat,
+    badge, badgeMat,
     applied: {},
   }
+}
+
+/** Glyph size in screen-locked sprite units. */
+export const BADGE_SIZE = 0.028
+
+/**
+ * Show or hide a node's type glyph. Called every paint, so it must be free
+ * when nothing changed — hence the `applied` guard.
+ */
+export function applyBadge(v: NodeVisual, kind: BadgeKind | null, color: string) {
+  if (!kind) {
+    v.badge.visible = false
+    v.applied.badge = undefined
+    return
+  }
+  const key = `${kind}|${color}`
+  if (v.applied.badge !== key) {
+    v.badgeMat.map = badgeTexture(kind, color)
+    v.badgeMat.needsUpdate = true
+    v.applied.badge = key
+  }
+  v.badge.visible = true
 }
 
 /** Point the label sprite at a (possibly cached) texture and size it. */
